@@ -2,16 +2,21 @@
 import os
 import json
 import cv2
-import mediapipe as mp
+# import mediapipe as mp
+from PIL import Image
+from ultralytics import YOLO
 from datetime import datetime
 from tqdm import tqdm
 import numpy as np
 
+# Load the yolo model
+yolo_model = YOLO("yolo26n-pose.pt")  #fast 
+
 # ==========================
 # CONFIG
 # ==========================
-VIDEO_PATH = r"data\video\spacer.mp4"
-OUTPUT_JSON = r"data/dataset/spacer.json"
+VIDEO_PATH = r"data\video\lift.mp4"
+OUTPUT_JSON = r"data/dataset/lift.json"
 
 # If True -> each landmark has x,y,z,visibility
 USE_VISIBILITY = True
@@ -23,6 +28,9 @@ SHOW_EVERY_N_FRAMES = 10
 def sec_from_frame(frame_idx, fps):
     return frame_idx / fps
 
+# extract the two cloosest objects/tools to the hands from each frame
+def find_closest_objects(rgb_frame, num_objects=2):
+    return []
 
 # ==========================
 # Main
@@ -34,31 +42,12 @@ def run_pose_extraction():
     fps = cap.get(cv2.CAP_PROP_FPS)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-    mp_pose = mp.solutions.pose
-    mp_finger = mp.solutions.hands
-    mp_drawing = mp.solutions.drawing_utils 
-    pose = mp_pose.Pose(
-        static_image_mode=False,
-        model_complexity=1,
-        enable_segmentation=False,
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.5,
-    )
-
-    fingers = mp_finger.Hands(
-        static_image_mode=False,
-        max_num_hands=2,
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.5,
-    )
-
-    #add finger landmarks to pose visualization
-
+    #add finger landmarks to pose visualization??? not sure now
 
     frames_out = []
 
     print("\n==============================")
-    print(" MediaPipe Pose Extraction Tool")
+    print(" YOLO Pose Extraction Tool")
     print("==============================")
     print(f"Video: {VIDEO_PATH}")
     print(f"FPS: {fps}")
@@ -75,91 +64,36 @@ def run_pose_extraction():
         frame_idx += 1
         t_sec = sec_from_frame(frame_idx, fps)
 
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        # rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-        result = pose.process(rgb)
-        finger_result = fingers.process(rgb)
+        results = yolo_model(frame)
 
-
-
-        if result.pose_landmarks and finger_result.multi_hand_landmarks is None:
+        # if result.pose_landmarks and finger_result.multi_hand_landmarks is None:
+        if not results:
             landmarks = []
         else:
             landmarks = []
             # add pose landmarks
-            for lm in result.pose_landmarks.landmark:
-                if USE_VISIBILITY:
-                    landmarks.append({
-                        "x": float(lm.x),
-                        "y": float(lm.y),
-                        "z": float(lm.z),
-                        "visibility": float(lm.visibility),
-                    })
-                else:
-                    landmarks.append({
-                        "x": float(lm.x),
-                        "y": float(lm.y),
-                        "z": float(lm.z),
-                    })
-            # add finger landmarks
-            for hand_landmarks in finger_result.multi_hand_landmarks:
-                for lm in hand_landmarks.landmark:
-                    if USE_VISIBILITY:
-                        landmarks.append({
-                            "x": float(lm.x),
-                            "y": float(lm.y),
-                            "z": float(lm.z),
-                            "visibility": float(lm.visibility),
-                        })
-                    else:
-                        landmarks.append({
-                            "x": float(lm.x),
-                            "y": float(lm.y),
-                            "z": float(lm.z),
-                        })
+            for result in results:
+                img_plot = result.plot()  # visualize the results on the image (optional)
+                img_plot = Image.fromarray(img_plot[..., ::-1])
+                img_plot.show()
+
+                
+                xy = result.keypoints.xy
+                landmarks.append(xy)
+
 
         frames_out.append({
             "frame": int(frame_idx),
             "t": round(float(t_sec), 6),
-            "landmarks": landmarks
+            "landmarks": landmarks # tensor format
         })
 
-        # ===============================
-        if result.pose_landmarks and frame_idx % SHOW_EVERY_N_FRAMES == 0:
-            h, w, _ = frame.shape
-
-            white_bg = 255 * np.ones((h, w, 3), dtype=np.uint8)
-            
-            mp_drawing.draw_landmarks(
-                white_bg,
-                result.pose_landmarks,
-                mp_pose.POSE_CONNECTIONS
-            )
-
-        
-            cv2.putText(
-                white_bg,
-                f"Frame: {frame_idx}",
-                (30, 40),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                1,
-                (0, 255, 0),
-                2
-            )
-
-            cv2.imshow("Pose Debug Window", white_bg)
-            #export the image
-            frame_output_path = f"C:/Users/loy49/Desktop/white/frame_{frame_idx:04d}.jpg"
-            os.makedirs(os.path.dirname(frame_output_path), exist_ok=True)
-            cv2.imwrite(frame_output_path, white_bg)   
-
-          
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
 
 
     cap.release()
-    pose.close()
+    # pose.close()
     cv2.destroyAllWindows() 
 
     
