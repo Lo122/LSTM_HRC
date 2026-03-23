@@ -22,9 +22,9 @@ yolo_model = YOLO("yolo26n-pose.pt")  #fast
 # ==========================
 # CONFIG
 # ==========================
-VIDEO_PATH = r"G:\.shortcut-targets-by-id\1Ykdzx6UjCe0KPKy_6M4LgCOTxKK6Awgy\videos\processed\1_spacer\cam1\cam1_spacer_M2.mp4"
+VIDEO_PATH = r"G:\.shortcut-targets-by-id\1Ykdzx6UjCe0KPKy_6M4LgCOTxKK6Awgy\videos\processed\cam2\cam2_Y1.mp4"
 # OUTPUT_JSON = r"data/dataset/cam1_spacer_Y1.json"
-OUTPUT_PT = r"data/dataset/cam1_spacer_M2.pt"
+OUTPUT_PT = r"data/dataset/cam2_Y1.pt"
 
 # If True -> each landmark has x,y,z,visibility
 USE_VISIBILITY = True
