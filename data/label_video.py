@@ -6,7 +6,7 @@ from datetime import datetime
 # ==========================
 # CONFIG
 # ==========================
-VIDEO_PATH = r"data\video\lift.mp4"
+VIDEO_PATH = r"G:\.shortcut-targets-by-id\1Ykdzx6UjCe0KPKy_6M4LgCOTxKK6Awgy\videos\processed\cam2\cam2_Y1.mp4"
 OUTPUT_JSON = r"data/dataset/labels_lift.json"
 
 ASSIST_KEYS = {

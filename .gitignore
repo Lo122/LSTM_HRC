@@ -17,6 +17,6 @@ __pycache__/
 .data/fine_tune/
 .data/fine_tune/**
 
-# yolo
+# yolo 
 *.pt
 *.pth
