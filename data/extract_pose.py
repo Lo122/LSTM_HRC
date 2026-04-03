@@ -22,9 +22,9 @@ yolo_model = YOLO("yolo26n-pose.pt")  #fast
 # ==========================
 # CONFIG
 # ==========================
-VIDEO_PATH = r"G:\.shortcut-targets-by-id\1Ykdzx6UjCe0KPKy_6M4LgCOTxKK6Awgy\videos\processed\cam2\cam2_Y1.mp4"
+VIDEO_PATH = r"G:\.shortcut-targets-by-id\1Ykdzx6UjCe0KPKy_6M4LgCOTxKK6Awgy\videos\processed\cam2\cam2_M1.mp4"
 # OUTPUT_JSON = r"data/dataset/cam1_spacer_Y1.json"
-OUTPUT_PT = r"data/dataset/cam2_Y1.pt"
+OUTPUT_PT = r"data/dataset/cam2_M1.pt"
 
 # If True -> each landmark has x,y,z,visibility
 USE_VISIBILITY = True
@@ -93,7 +93,51 @@ def normalize_keypoints(kpts_tensor):
     kpts_preprocessed = kpts_preprocessed / scale  # Scale the keypoints to fit within a unit circle
 
     return kpts_preprocessed
+
+def calculate_angle(a, b, c):
+    # Calculate the angle at point b formed by points a and c
+    ba = a - b
+    bc = c - b
+
+    cosine_angle = torch.dot(ba, bc) / (torch.norm(ba) * torch.norm(bc) + 1e-6)
+    angle = torch.acos(torch.clamp(cosine_angle, -1.0, 1.0))  # Clamp to avoid numerical issues
+    return torch.rad2deg(angle)
+
+def extract_posture_features(kpts_tensor):
+    if torch.all(kpts_tensor == 0):
+        return torch.zeros(9)  # Return a zero vector if no keypoints detected
+
+    # angle list 1: [degree between torso and left upper arm, degree between torso and right upper arm]
+    # [∠7-5-11，∠8-6-12] 
+    try:
+        angle1 = calculate_angle(kpts_tensor[7], kpts_tensor[5], kpts_tensor[11])
+        angle2 = calculate_angle(kpts_tensor[8], kpts_tensor[6], kpts_tensor[12])
     
+    # angle list 2: [degree between left upper arm and left forearm, degree between right upper arm and right forearm]
+    # [∠5-7-9，∠6-8-10]
+        angle3 = calculate_angle(kpts_tensor[5], kpts_tensor[7], kpts_tensor[9])
+        angle4 = calculate_angle(kpts_tensor[6], kpts_tensor[8], kpts_tensor[10])
+
+    # angle list 3: [degree between bottom torsor and left leg, degree between bottom torsor and right leg]
+    # [∠5-11-13，∠6-12-14]
+        angle5 = calculate_angle(kpts_tensor[5], kpts_tensor[11], kpts_tensor[13])
+        angle6 = calculate_angle(kpts_tensor[6], kpts_tensor[12], kpts_tensor[14])
+    
+    # angle list 4: [degree of left knee, degree of right knee]
+    # [∠11-13-15，∠12-14-16]
+        angle7 = calculate_angle(kpts_tensor[11], kpts_tensor[13], kpts_tensor[15])
+        angle8 = calculate_angle(kpts_tensor[12], kpts_tensor[14], kpts_tensor[16])
+
+    # divide(distance between two wrists, distance between two shoulders)
+    # l(9,10), l(5,6)
+        dist_wrists = torch.norm(kpts_tensor[9] - kpts_tensor[10])
+        dist_shoulders = torch.norm(kpts_tensor[5] - kpts_tensor[6]) + 1e-6  # Add epsilon to avoid division by zero
+        angle9 = dist_wrists / dist_shoulders
+
+        return torch.tensor([angle1, angle2, angle3, angle4, angle5, angle6, angle7, angle8, angle9])
+    
+    except Exception as e:
+        return torch.zeros(9)  # Return a zero vector if any error occurs during angle calculation (e.g., due to missing keypoints)
 # ==========================
 # Main
 # ==========================
@@ -133,11 +177,15 @@ def run_pose_extraction():
         if result.keypoints is not None and len(result.keypoints.xy) > 0:
             raw_kpts = result.keypoints.xyn[0].cpu()  # get the keypoints for the first detected person
             kpts = normalize_keypoints(raw_kpts)
+
         else:
             kpts = torch.zeros((17, 2))  # create a dummy tensor if no keypoints detected
 
+        kpts_features = extract_posture_features(kpts)
+
         frames_out.append({
                     "norm_kpts": kpts,
+                    "features": kpts_features,
                     "t": frame_idx / fps
                 })
         if frame_idx % SHOW_EVERY_N_FRAMES == 0:
@@ -153,6 +201,7 @@ def run_pose_extraction():
     save_data = {
         "metadata": {"video": VIDEO_PATH, "fps": fps},
         "landmarks": torch.stack([f["norm_kpts"] for f in frames_out]),
+        "features": torch.stack([f["features"] for f in frames_out]),
         "t_steps": torch.tensor([f["t"] for f in frames_out])
     }
 

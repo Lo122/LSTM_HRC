@@ -36,7 +36,7 @@ def run_label_tool():
     print("\n==============================")
     print(" WoZ Video Label Tool (Segment Mode)")
     print("==============================")
-    print("SPACE : pause / resume (pause时记录START)")
+    print("SPACE : pause / resume")
     print("ENTER : mark END")
     print("h     : select assist type")
     print("u     : undo")
