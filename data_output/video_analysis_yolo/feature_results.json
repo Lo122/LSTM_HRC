@@ -1,0 +1,524 @@
+{
+  "cam1_B1": {
+    "num_frames": 2831,
+    "body_speed_mean": 0.011992,
+    "body_speed_max": 1.092575,
+    "mean_speed_per_joint": {
+      "nose": 0.008238,
+      "left_eye": 0.008077,
+      "right_eye": 0.008337,
+      "left_ear": 0.008018,
+      "right_ear": 0.008369,
+      "left_shoulder": 0.009731,
+      "right_shoulder": 0.009493,
+      "left_elbow": 0.019271,
+      "right_elbow": 0.017749,
+      "left_wrist": 0.026229,
+      "right_wrist": 0.019799,
+      "left_hip": 0.008937,
+      "right_hip": 0.008363,
+      "left_knee": 0.009701,
+      "right_knee": 0.009592,
+      "left_ankle": 0.011985,
+      "right_ankle": 0.01198
+    },
+    "body_accel_mean": 0.007855,
+    "body_accel_max": 1.036312,
+    "mean_accel_per_joint": {
+      "nose": 0.005542,
+      "left_eye": 0.005435,
+      "right_eye": 0.005552,
+      "left_ear": 0.005056,
+      "right_ear": 0.005475,
+      "left_shoulder": 0.006119,
+      "right_shoulder": 0.006181,
+      "left_elbow": 0.013441,
+      "right_elbow": 0.011693,
+      "left_wrist": 0.018019,
+      "right_wrist": 0.013252,
+      "left_hip": 0.005233,
+      "right_hip": 0.004975,
+      "left_knee": 0.006032,
+      "right_knee": 0.006197,
+      "left_ankle": 0.007713,
+      "right_ankle": 0.007617
+    },
+    "joint_angles": {
+      "left_elbow": {
+        "mean_deg": 132.2666,
+        "std_deg": 36.1953,
+        "min_deg": 8.722,
+        "max_deg": 179.7505
+      },
+      "right_elbow": {
+        "mean_deg": 123.1821,
+        "std_deg": 51.7614,
+        "min_deg": 0.5764,
+        "max_deg": 180.0
+      },
+      "left_shoulder": {
+        "mean_deg": 86.2657,
+        "std_deg": 55.1318,
+        "min_deg": 0.0593,
+        "max_deg": 154.0154
+      },
+      "right_shoulder": {
+        "mean_deg": 79.6094,
+        "std_deg": 56.2164,
+        "min_deg": 0.0523,
+        "max_deg": 179.4991
+      },
+      "left_knee": {
+        "mean_deg": 173.8879,
+        "std_deg": 16.4028,
+        "min_deg": 5.6073,
+        "max_deg": 180.0
+      },
+      "right_knee": {
+        "mean_deg": 171.6493,
+        "std_deg": 16.9578,
+        "min_deg": 42.5847,
+        "max_deg": 180.0
+      }
+    },
+    "metadata": {
+      "video": "G:\\.shortcut-targets-by-id\\1Ykdzx6UjCe0KPKy_6M4LgCOTxKK6Awgy\\videos\\processed\\cam1\\cam1_B1.mp4",
+      "fps": 30.0
+    }
+  },
+  "cam1_M1": {
+    "num_frames": 2464,
+    "body_speed_mean": 0.009735,
+    "body_speed_max": 0.400144,
+    "mean_speed_per_joint": {
+      "nose": 0.007903,
+      "left_eye": 0.007562,
+      "right_eye": 0.007885,
+      "left_ear": 0.006966,
+      "right_ear": 0.007607,
+      "left_shoulder": 0.008105,
+      "right_shoulder": 0.007592,
+      "left_elbow": 0.014452,
+      "right_elbow": 0.013333,
+      "left_wrist": 0.020658,
+      "right_wrist": 0.017192,
+      "left_hip": 0.009481,
+      "right_hip": 0.008426,
+      "left_knee": 0.006883,
+      "right_knee": 0.007309,
+      "left_ankle": 0.007094,
+      "right_ankle": 0.00705
+    },
+    "body_accel_mean": 0.005904,
+    "body_accel_max": 0.34218,
+    "mean_accel_per_joint": {
+      "nose": 0.004874,
+      "left_eye": 0.004631,
+      "right_eye": 0.004683,
+      "left_ear": 0.004258,
+      "right_ear": 0.004381,
+      "left_shoulder": 0.004959,
+      "right_shoulder": 0.004118,
+      "left_elbow": 0.009269,
+      "right_elbow": 0.008465,
+      "left_wrist": 0.013765,
+      "right_wrist": 0.010862,
+      "left_hip": 0.004561,
+      "right_hip": 0.004187,
+      "left_knee": 0.004185,
+      "right_knee": 0.004102,
+      "left_ankle": 0.004474,
+      "right_ankle": 0.004592
+    },
+    "joint_angles": {
+      "left_elbow": {
+        "mean_deg": 131.0613,
+        "std_deg": 27.8962,
+        "min_deg": 36.4182,
+        "max_deg": 179.4666
+      },
+      "right_elbow": {
+        "mean_deg": 116.7412,
+        "std_deg": 38.515,
+        "min_deg": 17.6706,
+        "max_deg": 180.0
+      },
+      "left_shoulder": {
+        "mean_deg": 81.9018,
+        "std_deg": 43.0857,
+        "min_deg": 0.0442,
+        "max_deg": 146.3346
+      },
+      "right_shoulder": {
+        "mean_deg": 73.3367,
+        "std_deg": 40.5592,
+        "min_deg": 0.0,
+        "max_deg": 141.0081
+      },
+      "left_knee": {
+        "mean_deg": 175.1156,
+        "std_deg": 13.3541,
+        "min_deg": 34.5663,
+        "max_deg": 180.0
+      },
+      "right_knee": {
+        "mean_deg": 168.7531,
+        "std_deg": 14.9478,
+        "min_deg": 30.7352,
+        "max_deg": 174.7719
+      }
+    },
+    "metadata": {
+      "video": "G:\\.shortcut-targets-by-id\\1Ykdzx6UjCe0KPKy_6M4LgCOTxKK6Awgy\\videos\\processed\\cam1\\cam1_M1.mp4",
+      "fps": 30.0
+    }
+  },
+  "cam1_Y1": {
+    "num_frames": 2822,
+    "body_speed_mean": 0.009661,
+    "body_speed_max": 0.370478,
+    "mean_speed_per_joint": {
+      "nose": 0.008148,
+      "left_eye": 0.007787,
+      "right_eye": 0.007962,
+      "left_ear": 0.007182,
+      "right_ear": 0.007053,
+      "left_shoulder": 0.007831,
+      "right_shoulder": 0.008014,
+      "left_elbow": 0.014996,
+      "right_elbow": 0.014386,
+      "left_wrist": 0.021305,
+      "right_wrist": 0.017533,
+      "left_hip": 0.007653,
+      "right_hip": 0.006938,
+      "left_knee": 0.006318,
+      "right_knee": 0.006441,
+      "left_ankle": 0.007337,
+      "right_ankle": 0.007351
+    },
+    "body_accel_mean": 0.006248,
+    "body_accel_max": 0.354489,
+    "mean_accel_per_joint": {
+      "nose": 0.005074,
+      "left_eye": 0.004839,
+      "right_eye": 0.004798,
+      "left_ear": 0.004372,
+      "right_ear": 0.004574,
+      "left_shoulder": 0.004911,
+      "right_shoulder": 0.004829,
+      "left_elbow": 0.009658,
+      "right_elbow": 0.009839,
+      "left_wrist": 0.015057,
+      "right_wrist": 0.011638,
+      "left_hip": 0.004548,
+      "right_hip": 0.004123,
+      "left_knee": 0.003819,
+      "right_knee": 0.004302,
+      "left_ankle": 0.00479,
+      "right_ankle": 0.005039
+    },
+    "joint_angles": {
+      "left_elbow": {
+        "mean_deg": 133.3176,
+        "std_deg": 29.1918,
+        "min_deg": 27.1087,
+        "max_deg": 179.4013
+      },
+      "right_elbow": {
+        "mean_deg": 152.0218,
+        "std_deg": 33.997,
+        "min_deg": 20.8005,
+        "max_deg": 180.0
+      },
+      "left_shoulder": {
+        "mean_deg": 93.1044,
+        "std_deg": 50.4359,
+        "min_deg": 0.0,
+        "max_deg": 159.0496
+      },
+      "right_shoulder": {
+        "mean_deg": 110.2393,
+        "std_deg": 55.4238,
+        "min_deg": 0.1679,
+        "max_deg": 175.7825
+      },
+      "left_knee": {
+        "mean_deg": 175.2862,
+        "std_deg": 14.0976,
+        "min_deg": 5.5122,
+        "max_deg": 180.0
+      },
+      "right_knee": {
+        "mean_deg": 173.6323,
+        "std_deg": 13.6128,
+        "min_deg": 23.3339,
+        "max_deg": 180.0
+      }
+    },
+    "metadata": {
+      "video": "G:\\.shortcut-targets-by-id\\1Ykdzx6UjCe0KPKy_6M4LgCOTxKK6Awgy\\videos\\processed\\cam1\\cam1_Y1.mp4",
+      "fps": 30.0
+    }
+  },
+  "cam2_B1": {
+    "num_frames": 2953,
+    "body_speed_mean": 0.01382,
+    "body_speed_max": 2.487261,
+    "mean_speed_per_joint": {
+      "nose": 0.011254,
+      "left_eye": 0.010901,
+      "right_eye": 0.011124,
+      "left_ear": 0.01027,
+      "right_ear": 0.010679,
+      "left_shoulder": 0.011324,
+      "right_shoulder": 0.012652,
+      "left_elbow": 0.023357,
+      "right_elbow": 0.016261,
+      "left_wrist": 0.027748,
+      "right_wrist": 0.021353,
+      "left_hip": 0.010067,
+      "right_hip": 0.010422,
+      "left_knee": 0.009482,
+      "right_knee": 0.009896,
+      "left_ankle": 0.013901,
+      "right_ankle": 0.014243
+    },
+    "body_accel_mean": 0.011609,
+    "body_accel_max": 2.487261,
+    "mean_accel_per_joint": {
+      "nose": 0.009655,
+      "left_eye": 0.009533,
+      "right_eye": 0.009625,
+      "left_ear": 0.009149,
+      "right_ear": 0.009472,
+      "left_shoulder": 0.009885,
+      "right_shoulder": 0.010463,
+      "left_elbow": 0.01693,
+      "right_elbow": 0.011793,
+      "left_wrist": 0.022085,
+      "right_wrist": 0.016332,
+      "left_hip": 0.007177,
+      "right_hip": 0.007589,
+      "left_knee": 0.009144,
+      "right_knee": 0.009686,
+      "left_ankle": 0.014384,
+      "right_ankle": 0.014451
+    },
+    "joint_angles": {
+      "left_elbow": {
+        "mean_deg": 131.8269,
+        "std_deg": 45.0461,
+        "min_deg": 0.1187,
+        "max_deg": 179.9802
+      },
+      "right_elbow": {
+        "mean_deg": 110.8329,
+        "std_deg": 38.2446,
+        "min_deg": 0.0396,
+        "max_deg": 179.7842
+      },
+      "left_shoulder": {
+        "mean_deg": 86.3532,
+        "std_deg": 58.0335,
+        "min_deg": 0.0766,
+        "max_deg": 179.6406
+      },
+      "right_shoulder": {
+        "mean_deg": 78.9282,
+        "std_deg": 45.5577,
+        "min_deg": 0.1203,
+        "max_deg": 162.0199
+      },
+      "left_knee": {
+        "mean_deg": 175.6165,
+        "std_deg": 14.6691,
+        "min_deg": 90.0,
+        "max_deg": 180.0
+      },
+      "right_knee": {
+        "mean_deg": 174.8608,
+        "std_deg": 14.4721,
+        "min_deg": 90.0,
+        "max_deg": 180.0
+      }
+    },
+    "metadata": {
+      "video": "G:\\.shortcut-targets-by-id\\1Ykdzx6UjCe0KPKy_6M4LgCOTxKK6Awgy\\videos\\processed\\cam2\\cam2_B1.mp4",
+      "fps": 30.0
+    }
+  },
+  "cam2_M1": {
+    "num_frames": 2444,
+    "body_speed_mean": 0.011325,
+    "body_speed_max": 2.268974,
+    "mean_speed_per_joint": {
+      "nose": 0.010445,
+      "left_eye": 0.010213,
+      "right_eye": 0.01017,
+      "left_ear": 0.008514,
+      "right_ear": 0.00878,
+      "left_shoulder": 0.007455,
+      "right_shoulder": 0.007895,
+      "left_elbow": 0.013471,
+      "right_elbow": 0.011466,
+      "left_wrist": 0.019406,
+      "right_wrist": 0.018756,
+      "left_hip": 0.009654,
+      "right_hip": 0.00978,
+      "left_knee": 0.009877,
+      "right_knee": 0.00992,
+      "left_ankle": 0.013187,
+      "right_ankle": 0.013542
+    },
+    "body_accel_mean": 0.008891,
+    "body_accel_max": 2.268093,
+    "mean_accel_per_joint": {
+      "nose": 0.008236,
+      "left_eye": 0.008028,
+      "right_eye": 0.007969,
+      "left_ear": 0.006768,
+      "right_ear": 0.006891,
+      "left_shoulder": 0.005989,
+      "right_shoulder": 0.005908,
+      "left_elbow": 0.009812,
+      "right_elbow": 0.008167,
+      "left_wrist": 0.014493,
+      "right_wrist": 0.013834,
+      "left_hip": 0.006003,
+      "right_hip": 0.005949,
+      "left_knee": 0.008791,
+      "right_knee": 0.00858,
+      "left_ankle": 0.012721,
+      "right_ankle": 0.013004
+    },
+    "joint_angles": {
+      "left_elbow": {
+        "mean_deg": 149.2733,
+        "std_deg": 30.6481,
+        "min_deg": 1.7191,
+        "max_deg": 179.9802
+      },
+      "right_elbow": {
+        "mean_deg": 107.8464,
+        "std_deg": 38.2797,
+        "min_deg": 0.3701,
+        "max_deg": 177.3368
+      },
+      "left_shoulder": {
+        "mean_deg": 100.0291,
+        "std_deg": 52.6408,
+        "min_deg": 0.0685,
+        "max_deg": 176.8202
+      },
+      "right_shoulder": {
+        "mean_deg": 83.7017,
+        "std_deg": 41.7786,
+        "min_deg": 0.0969,
+        "max_deg": 139.2958
+      },
+      "left_knee": {
+        "mean_deg": 176.7814,
+        "std_deg": 4.4706,
+        "min_deg": 90.0,
+        "max_deg": 179.9802
+      },
+      "right_knee": {
+        "mean_deg": 175.1996,
+        "std_deg": 4.4073,
+        "min_deg": 90.0,
+        "max_deg": 180.0
+      }
+    },
+    "metadata": {
+      "video": "G:\\.shortcut-targets-by-id\\1Ykdzx6UjCe0KPKy_6M4LgCOTxKK6Awgy\\videos\\processed\\cam2\\cam2_M1.mp4",
+      "fps": 30.0
+    }
+  },
+  "cam2_Y1": {
+    "num_frames": 2736,
+    "body_speed_mean": 0.008264,
+    "body_speed_max": 0.344724,
+    "mean_speed_per_joint": {
+      "nose": 0.007232,
+      "left_eye": 0.006801,
+      "right_eye": 0.00686,
+      "left_ear": 0.005895,
+      "right_ear": 0.006061,
+      "left_shoulder": 0.006174,
+      "right_shoulder": 0.006761,
+      "left_elbow": 0.013914,
+      "right_elbow": 0.01128,
+      "left_wrist": 0.018788,
+      "right_wrist": 0.017833,
+      "left_hip": 0.005776,
+      "right_hip": 0.006381,
+      "left_knee": 0.00429,
+      "right_knee": 0.004599,
+      "left_ankle": 0.005919,
+      "right_ankle": 0.005927
+    },
+    "body_accel_mean": 0.005277,
+    "body_accel_max": 0.278327,
+    "mean_accel_per_joint": {
+      "nose": 0.004312,
+      "left_eye": 0.004019,
+      "right_eye": 0.004114,
+      "left_ear": 0.003578,
+      "right_ear": 0.003763,
+      "left_shoulder": 0.003765,
+      "right_shoulder": 0.004157,
+      "left_elbow": 0.009206,
+      "right_elbow": 0.007151,
+      "left_wrist": 0.012537,
+      "right_wrist": 0.012883,
+      "left_hip": 0.003316,
+      "right_hip": 0.003739,
+      "left_knee": 0.002725,
+      "right_knee": 0.00279,
+      "left_ankle": 0.003912,
+      "right_ankle": 0.003741
+    },
+    "joint_angles": {
+      "left_elbow": {
+        "mean_deg": 159.3087,
+        "std_deg": 33.486,
+        "min_deg": 1.2071,
+        "max_deg": 180.0
+      },
+      "right_elbow": {
+        "mean_deg": 138.7588,
+        "std_deg": 33.8685,
+        "min_deg": 0.4694,
+        "max_deg": 179.8002
+      },
+      "left_shoulder": {
+        "mean_deg": 119.9934,
+        "std_deg": 63.6998,
+        "min_deg": 0.2471,
+        "max_deg": 179.9802
+      },
+      "right_shoulder": {
+        "mean_deg": 113.1405,
+        "std_deg": 55.4037,
+        "min_deg": 0.0343,
+        "max_deg": 179.3832
+      },
+      "left_knee": {
+        "mean_deg": 177.7296,
+        "std_deg": 1.6415,
+        "min_deg": 158.465,
+        "max_deg": 180.0
+      },
+      "right_knee": {
+        "mean_deg": 177.8158,
+        "std_deg": 1.6805,
+        "min_deg": 159.205,
+        "max_deg": 180.0
+      }
+    },
+    "metadata": {
+      "video": "G:\\.shortcut-targets-by-id\\1Ykdzx6UjCe0KPKy_6M4LgCOTxKK6Awgy\\videos\\processed\\cam2\\cam2_Y1.mp4",
+      "fps": 30.0
+    }
+  }
+}
