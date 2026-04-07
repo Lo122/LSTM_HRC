@@ -20,3 +20,7 @@ __pycache__/
 # yolo 
 *.pt
 *.pth
+
+
+*.json
+*.npz

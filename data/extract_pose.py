@@ -22,9 +22,9 @@ yolo_model = YOLO("yolo26n-pose.pt")  #fast
 # ==========================
 # CONFIG
 # ==========================
-VIDEO_PATH = r"G:\.shortcut-targets-by-id\1Ykdzx6UjCe0KPKy_6M4LgCOTxKK6Awgy\videos\processed\cam2\cam2_M1.mp4"
+
 # OUTPUT_JSON = r"data/dataset/cam1_spacer_Y1.json"
-OUTPUT_PT = r"data/dataset/cam2_M1.pt"
+OUTPUT_DIR = r"data/dataset"
 
 # If True -> each landmark has x,y,z,visibility
 USE_VISIBILITY = True
@@ -35,6 +35,23 @@ SHOW_EVERY_N_FRAMES = 20
 # ==========================
 def sec_from_frame(frame_idx, fps):
     return frame_idx / fps
+# Nose
+# Left Eye
+# Right Eye
+# Left Ear
+# Right Ear
+# Left Shoulder
+# Right Shoulder
+# Left Elbow
+# Right Elbow
+# Left Wrist
+# Right Wrist
+# Left Hip
+# Right Hip
+# Left Knee
+# Right Knee
+# Left Ankle
+# Right Ankle
 
 #region - not used for now
 # extract the two cloosest objects/tools to the hands from each frame
@@ -80,6 +97,7 @@ def sec_from_frame(frame_idx, fps):
 
 #     return closest_per_hand
 #endregion
+
 
 def normalize_keypoints(kpts_tensor):
     if torch.all(kpts_tensor == 0):
@@ -141,7 +159,8 @@ def extract_posture_features(kpts_tensor):
 # ==========================
 # Main
 # ==========================
-def run_pose_extraction():
+def run_pose_extraction(VIDEO_PATH):
+
     assert os.path.exists(VIDEO_PATH), f"Video not found: {VIDEO_PATH}"
 
     cap = cv2.VideoCapture(VIDEO_PATH)
@@ -181,6 +200,8 @@ def run_pose_extraction():
         else:
             kpts = torch.zeros((17, 2))  # create a dummy tensor if no keypoints detected
 
+
+# organize features
         kpts_features = extract_posture_features(kpts)
 
         frames_out.append({
@@ -197,18 +218,49 @@ def run_pose_extraction():
     cap.release()
     cv2.destroyAllWindows()
 
+    # --- Final Data Organization ---
+    all_landmarks = torch.stack([f["norm_kpts"] for f in frames_out]) # (T, 17, 2)
+    all_degrees = torch.stack([f["features"] for f in frames_out])   # (T, 9)
+
+    # 1. Calculate Velocity (Speed) - (T-1, 17)
+    # diff calculates: x[i+1] - x[i]
+    velocity = torch.diff(all_landmarks, dim=0)
+    speed = torch.norm(velocity, dim=2) 
+    
+    # 2. Calculate Acceleration - (T-2, 17)
+    # accel calculates: |speed[i+1] - speed[i]|
+    accel = torch.abs(torch.diff(speed, dim=0))
+    
+    # 3. Padding to maintain original frame count T
+    # Speed: Pad 1 row of zeros at the start
+    speed_padded = torch.cat([torch.zeros((1, 17)), speed], dim=0)
+    
+    # Acceleration: Pad 2 rows of zeros at the start 
+    # (or 1 at start, 1 at end) to keep T frames
+    accel_padded = torch.cat([torch.zeros((2, 17)), accel], dim=0)
+
+
     #save
     save_data = {
         "metadata": {"video": VIDEO_PATH, "fps": fps},
-        "landmarks": torch.stack([f["norm_kpts"] for f in frames_out]),
-        "features": torch.stack([f["features"] for f in frames_out]),
+        "landmarks": all_landmarks,
+        "features": all_degrees,
+        "speed": speed_padded,
+        "acceleration": accel_padded,
         "t_steps": torch.tensor([f["t"] for f in frames_out])
     }
+
+    OUTPUT_PT = os.path.join(OUTPUT_DIR, os.path.basename(VIDEO_PATH).replace(".mp4", ".pt"))
 
     os.makedirs(os.path.dirname(OUTPUT_PT), exist_ok=True)
     torch.save(save_data, OUTPUT_PT)
     print(f"\nSaved {len(frames_out)} frames to {OUTPUT_PT}")
 
 
-if __name__ == "__main__":
-    run_pose_extraction()
+# if __name__ == "__main__":
+
+#     VIDEO_DIR = r"G:\.shortcut-targets-by-id\1Ykdzx6UjCe0KPKy_6M4LgCOTxKK6Awgy\videos\processed\cam3"
+
+#     VIDEO_PATHS = [os.path.join(VIDEO_DIR, f) for f in os.listdir(VIDEO_DIR) if f.endswith(".mp4")]
+#     for video_path in VIDEO_PATHS:
+#         run_pose_extraction(video_path)

@@ -5,7 +5,13 @@ import numpy as np
 from dataclasses import dataclass
 from typing import Optional, Tuple
 import csv
+import torch
 
+device = "cuda" if torch.cuda.is_available() else "cpu"
+print(f"Using device: {device}")
+
+json_dir = r"data\video_labels"
+pt_dir = r"data\dataset"
 
 # ============================================================
 # Config
@@ -163,8 +169,6 @@ def compute_urgency_and_type(
 #     # fallback
 #     return 0, np.zeros((0,), dtype=np.float32), np.zeros((0,), dtype=np.float32), np.zeros((0,), dtype=np.float32)
 
-
-
 # ============================================================
 # Pose loading: pose.json -> pose.npy (in-memory)
 # ============================================================
@@ -212,34 +216,124 @@ def load_pose_from_json(pose_json_path: str) -> np.ndarray:
     return pose_arr
 
 
+# change the key if npz structure changes
+def load_feature_from_pt(pt_path: str, mean,std) -> np.ndarray:
+    data = torch.load(pt_path, weights_only=False)
+    landmarks = data['landmarks']
+    degree_feat = data['features']
+    speed = data['speed']
+    acceleration = data['acceleration']
+
+    T = landmarks.shape[0]
+    landmarks_flatten = landmarks.reshape(T, -1)
+
+    angle_rad = torch.deg2rad(degree_feat)
+    sin_feat = torch.sin(angle_rad)
+    cos_feat = torch.cos(angle_rad)
+
+    angle_feat = torch.cat([sin_feat, cos_feat], dim=1)
+
+    #concatenate
+    pose_feat = torch.cat([angle_feat, acceleration], dim=1)
+
+    #normalize
+    pose_feat = pose_feat.numpy()
+    pose_feat = (pose_feat - mean) / std
+    return pose_feat.astype(np.float32)
+
+
+
+def generate_step_soft_labels(
+    step_markers,
+    fps,
+    total_frames,
+    num_steps=None,
+    sigma_sec=5.0
+):
+    """
+    Generate soft step labels [T, num_steps] using Gaussian peaks.
+
+    Args:
+        step_markers: [{"timestamp": float, "step_id": int}, ...]
+        fps: int
+        total_frames: int
+        num_steps: optional int
+        sigma_sec: float (spread in seconds)
+
+    Returns:
+        soft_labels: np.ndarray [T, num_steps]
+    """
+
+    # ---- step_id mapping ----
+    if num_steps is None:
+        step_ids = sorted(list(set(m["step_id"] for m in step_markers)))
+        step_to_idx = {sid: i for i, sid in enumerate(step_ids)}
+        num_steps = len(step_ids)
+    else:
+        step_to_idx = {sid: sid for sid in range(num_steps)}
+
+    # ---- convert peaks ----
+    peak_frames = []
+    peak_steps = []
+
+    for m in step_markers:
+        frame = int(round(m["timestamp"] * fps))
+        peak_frames.append(frame)
+        peak_steps.append(step_to_idx[m["step_id"]])
+
+    peak_frames = np.array(peak_frames)
+    peak_steps = np.array(peak_steps)
+
+    # ---- build field ----
+    T = total_frames
+    soft = np.zeros((T, num_steps), dtype=np.float32)
+
+    sigma = sigma_sec * fps
+    t_axis = np.arange(T)
+
+    for pf, ps in zip(peak_frames, peak_steps):
+        prob = np.exp(- (t_axis - pf) ** 2 / (2 * sigma ** 2))
+        soft[:, ps] += prob
+
+    # ---- normalize ----
+    s = soft.sum(axis=1, keepdims=True)
+    s[s == 0] = 1.0
+    soft = soft / s
+
+    return soft
+
 # ============================================================
 # Build dataset (PURE FRAME LEVEL VERSION)
 # ============================================================
 def build_dataset(
-    pose_json_path: str,
+    pt_path: str,
     labels_json_path: str,
-    design_json_path: str,
-    cfg: Config
+    cfg: Config,
+    mean: np.ndarray,
+    std: np.ndarray
 ):
     # 1) load data
-    pose = load_pose_from_json(pose_json_path)
+    pose = load_feature_from_pt(pt_path, mean, std)  # [T, pose_dim]
     labels = load_json(labels_json_path)
 
-    events = labels.get("assist_events", [])
-    if len(events) > 0:
-        step_id = events[0].get("step_id", 0)
-        element_id = events[0].get("element_id", 0)
-    else:
-        step_id = 0
-        element_id = 0
+    step_markers = labels.get("step_markers", [])
 
-    design_data = load_json(design_json_path)
 
-    elem_feat = design_data.get(str(element_id), {}).get("element_features", [])
-    env_feat = design_data.get(str(step_id), {}).get("env_features", [])
+    # events = labels.get("assist_events", [])
+    # if len(events) > 0:
+    #     step_id = events[0].get("step_id", 0)
+    #     element_id = events[0].get("element_id", 0)
+    # else:
+    #     step_id = 0
+    #     element_id = 0
 
-    elem_feat = np.array(elem_feat, dtype=np.float32)
-    env_feat = np.array(env_feat, dtype=np.float32)
+    # design_data = load_json(design_json_path)
+
+    # elem_feat = design_data.get(str(element_id), {}).get("element_features", [])
+    # env_feat = design_data.get(str(step_id), {}).get("env_features", [])
+
+    # elem_feat = np.array(elem_feat, dtype=np.float32)
+    # env_feat = np.array(env_feat, dtype=np.float32)
 
     # pose shape: [num_frames, pose_dim]
     assert pose.ndim == 2, f"pose must be [frames, pose_dim], got {pose.shape}"
@@ -248,6 +342,13 @@ def build_dataset(
     # ============================================================
     # FRAME-LEVEL LOOP
     # ============================================================
+
+    step_soft = generate_step_soft_labels(
+    step_markers=step_markers,
+    fps=cfg.fps,
+    total_frames=num_frames,
+    sigma_sec=2.0
+    )
 
     X_pose = []
     X_step = []
@@ -265,42 +366,43 @@ def build_dataset(
         # pose per frame
         x = pose[frame_idx]  # [pose_dim]
 
-        y_type, y_urgency, y_eta = compute_urgency_and_type(
-            t_sec=t_sec,
-            step_id=step_id,
-            labels=labels,
-            lambda_sec=cfg.urgency_lambda
-        )
+        # y_type, y_urgency, y_eta = compute_urgency_and_type(
+        #     t_sec=t_sec,
+        #     step_id=step_id,
+        #     labels=labels,
+        #     lambda_sec=cfg.urgency_lambda
+        # )
 
         X_pose.append(x)
-        X_step.append(step_id)
-        X_elem.append(elem_feat)
-        X_env.append(env_feat)
+        X_step.append(step_soft[frame_idx])
+        # X_elem.append(elem_feat)
+        # X_env.append(env_feat)
 
-        Y_type.append(y_type)
-        Y_urgency.append(y_urgency)
-        Y_eta.append(y_eta)
+        # Y_type.append(y_type)
+        # Y_urgency.append(y_urgency)
+        # Y_eta.append(y_eta)
 
     # -----------------------------
     # pack arrays
     # -----------------------------
     X_pose = np.stack(X_pose, axis=0).astype(np.float32)  # [T, pose_dim]
-    X_step = np.array(X_step, dtype=np.int64)             # [T]
-    Y_type = np.array(Y_type, dtype=np.int64)
-    Y_urgency = np.array(Y_urgency, dtype=np.float32)
-    Y_eta = np.array(Y_eta, dtype=np.float32)
+    X_step = np.stack(X_step, axis=0).astype(np.float32)   # [T]
+    # Y_type = np.array(Y_type, dtype=np.int64)
+    # Y_urgency = np.array(Y_urgency, dtype=np.float32)
+    # Y_eta = np.array(Y_eta, dtype=np.float32)
 
     # pad static feats
-    def pad_feats(list_of_arr):
-        max_d = max([a.shape[0] for a in list_of_arr]) if len(list_of_arr) > 0 else 0
-        out = np.zeros((len(list_of_arr), max_d), dtype=np.float32)
-        for i, a in enumerate(list_of_arr):
-            if a.shape[0] > 0:
-                out[i, :a.shape[0]] = a
-        return out, max_d
 
-    X_elem, elem_dim = pad_feats(X_elem)
-    X_env, env_dim = pad_feats(X_env)
+    # def pad_feats(list_of_arr):
+    #     max_d = max([a.shape[0] for a in list_of_arr]) if len(list_of_arr) > 0 else 0
+    #     out = np.zeros((len(list_of_arr), max_d), dtype=np.float32)
+    #     for i, a in enumerate(list_of_arr):
+    #         if a.shape[0] > 0:
+    #             out[i, :a.shape[0]] = a
+    #     return out, max_d
+
+    # X_elem, elem_dim = pad_feats(X_elem)
+    # X_env, env_dim = pad_feats(X_env)
 
     # -----------------------------
     # save
@@ -310,39 +412,42 @@ def build_dataset(
 
         X_pose=X_pose,      # [T, pose_dim]
         X_step=X_step,
-        X_elem=X_elem,
-        X_env=X_env,
+        # X_elem=X_elem,
+        # X_env=X_env,
 
-        Y_type=Y_type,
-        Y_urgency=Y_urgency,
-        Y_eta=Y_eta,
+        # Y_type=Y_type,
+        # Y_urgency=Y_urgency,
+        # Y_eta=Y_eta,
 
         pose_dim=pose_dim,
-        elem_dim=elem_dim,
-        env_dim=env_dim,
+        # elem_dim=elem_dim,
+        # env_dim=env_dim,
 
-        fps=cfg.fps,
-        urgency_lambda=cfg.urgency_lambda,
+        # fps=cfg.fps,
+        # urgency_lambda=cfg.urgency_lambda,
     )
 
-    # CSV for visualization
-    with open(cfg.out_path.replace(".npz", ".csv"), "w", newline='') as f:
-        writer = csv.writer(f)
-        header = ["frame_idex","X_pose", "X_step", "X_elem", "X_env", "Y_type", "Y_urgency", "Y_eta"]
-        writer.writerow(header)
-        for i in range(len(X_pose)):
-            row = [
-                i,
-                X_pose[i].tolist(),
-                X_step[i].item(),
-                X_elem[i].tolist(),
-                X_env[i].tolist(),
-                Y_type[i].item(),
-                Y_urgency[i].item(),
-                Y_eta[i].item()
-            ]
-            writer.writerow(row)
 
+#region - not used for now
+# CSV for visualization
+    # with open(cfg.out_path.replace(".npz", ".csv"), "w", newline='') as f:
+    #     writer = csv.writer(f)
+    #     header = ["frame_index", "X_pose", "X_step"] #, "X_elem", "X_env", "Y_type", "Y_urgency", "Y_eta"]  
+    #     # header = ["frame_idex","X_pose", "X_step", "X_elem", "X_env", "Y_type", "Y_urgency", "Y_eta"]
+    #     writer.writerow(header)
+    #     for i in range(len(X_pose)):
+    #         row = [
+    #             i,
+    #             X_pose[i].tolist(),
+    #             X_step[i].tolist(),
+    #             # X_elem[i].tolist(),
+    #             # X_env[i].tolist(),
+    #             # Y_type[i].item(),
+    #             # Y_urgency[i].item(),
+    #             # Y_eta[i].item()
+    #         ]
+    #         writer.writerow(row)
+#endregion
 
     print("\n==============================")
     print("Frame-level dataset built successfully!")
@@ -351,34 +456,75 @@ def build_dataset(
     print(f"Frames: {len(X_pose)}")
     print(f"X_pose: {X_pose.shape}")
     print(f"X_step: {X_step.shape}")
-    print(f"X_elem: {X_elem.shape}")
-    print(f"X_env : {X_env.shape}")
-    print(f"Y_urgency: {Y_urgency.shape}")
+    # print(f"X_elem: {X_elem.shape}")
+    # print(f"X_env : {X_env.shape}")
+    # print(f"Y_urgency: {Y_urgency.shape}")
     print("==============================\n")
 
+import torch
+import numpy as np
+from tqdm import tqdm
 
-# ============================================================
-# dataloader from frame-level to window-level
-# ============================================================
+def compute_global_norm_stats(pt_files):
 
+    all_feats = []
+
+    for pt_path in pt_files:
+        pt_path = os.path.join(pt_dir, pt_path)
+        data = torch.load(pt_path, weights_only=False)
+
+        degree_feat = data['features']       # [T, 9]
+        acceleration = data['acceleration']  # [T, 17]
+
+        angle_rad = torch.deg2rad(degree_feat)
+        sin_feat = torch.sin(angle_rad)
+        cos_feat = torch.cos(angle_rad)
+
+        angle_feat = torch.cat([sin_feat, cos_feat], dim=1)  # [T, 18]
+
+        pose_feat = torch.cat([angle_feat, acceleration], dim=1)  # [T, F]
+
+        all_feats.append(pose_feat.numpy())
+
+    all_feats = np.concatenate(all_feats, axis=0)  # [N, F]
+
+    mean = all_feats.mean(axis=0)
+    std = all_feats.std(axis=0) + 1e-6
+
+    return mean.astype(np.float32), std.astype(np.float32)
 
 
 if __name__ == "__main__":
-    # Example:
-    # - pose_json_path: generated by extract_pose_json.py
-    # - labels_json_path: generated by label_video.py (unified)
-    # - meta_json_path: optional
-    cfg = Config(
-        fps=30,
-        window_sec=1, #float
-        stride_sec=1, #float
-        history_M=1, #int
-        out_path="data/dataset/dataset_lift.npz"
-    )
 
-    build_dataset(
-        pose_json_path="data/dataset/pose_lift.json",
-        labels_json_path="data/dataset/labels_lift.json",
-        design_json_path="data/dataset/design_data.json",
-        cfg=cfg
-    )
+
+    pt_files = [f for f in os.listdir(pt_dir) if f.endswith(".pt")]
+
+    #degree and acceleration
+    mean, std = compute_global_norm_stats(pt_files)
+    np.savez("norm_stats.npz", mean=mean, std=std)
+    print("Global feature mean:", mean)
+    print("Global feature std:", std)
+    
+    for pt_file in pt_files:
+        pt_path = os.path.join(pt_dir, pt_file)
+        out_path = os.path.join("data/built_dataset", os.path.basename(pt_path).replace(".pt", "_window.npz"))
+
+        json_paths = os.path.join(json_dir, os.path.basename(pt_path).replace(".pt", "_steps.json"))
+
+
+        cfg = Config(
+            fps=30,
+            window_sec=1, #float
+            stride_sec=1, #float
+            history_M=1, #int
+            out_path=out_path
+        )
+
+        build_dataset(
+            pt_path=pt_path,
+            labels_json_path=json_paths,
+            # design_json_path="data/dataset/design_data.json",
+            cfg=cfg,
+            mean=mean,
+            std=std
+        )
