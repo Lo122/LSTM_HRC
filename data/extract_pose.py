@@ -261,12 +261,13 @@ def run_pose_extraction(VIDEO_PATH):
 
 
 if __name__ == "__main__":
+    pass
 
     # path = r"G:\.shortcut-targets-by-id\1Ykdzx6UjCe0KPKy_6M4LgCOTxKK6Awgy\videos\processed\cam1\cam1_Y1.mp4"
     # run_pose_extraction(path)
 
-    VIDEO_DIR = r"G:\.shortcut-targets-by-id\1Ykdzx6UjCe0KPKy_6M4LgCOTxKK6Awgy\videos\processed\cam3"
+    # VIDEO_DIR = r"G:\.shortcut-targets-by-id\1Ykdzx6UjCe0KPKy_6M4LgCOTxKK6Awgy\videos\processed\cam3"
 
-    VIDEO_PATHS = [os.path.join(VIDEO_DIR, f) for f in os.listdir(VIDEO_DIR) if f.endswith(".mp4")]
-    for video_path in VIDEO_PATHS:
-        run_pose_extraction(video_path)
+    # VIDEO_PATHS = [os.path.join(VIDEO_DIR, f) for f in os.listdir(VIDEO_DIR) if f.endswith(".mp4")]
+    # for video_path in VIDEO_PATHS:
+    #     run_pose_extraction(video_path)

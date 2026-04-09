@@ -5,11 +5,20 @@ import numpy as np
 from ultralytics import YOLO
 from collections import deque
 
+import os
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(ROOT)
+
+from data.extract_pose import normalize_keypoints, extract_posture_features
+from LSTM.LSTM_model_train import AssistLSTM
+
 # =========================
 # CONFIG
 # =========================
-MODEL_PATH = "assist_model.pth"
-NORM_PATH = "norm_stats.npz"
+MODEL_PATH = r"C:\Users\loy49\Desktop\REPO\LSTM_HRC\LSTM\lstm_hrc.pth"
+NORM_PATH = r"C:\Users\loy49\Desktop\REPO\LSTM_HRC\norm_stats.npz"
 
 WINDOW_SIZE = 30
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -17,9 +26,9 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 # =========================
 # LOAD MODEL
 # =========================
-from model import AssistLSTM
 
-model = AssistLSTM(input_dim=35)
+#Hybrid (Deg+Sp):   (61104, 33)
+model = AssistLSTM(input_dim=33)
 model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
 model.to(DEVICE)
 model.eval()
@@ -28,8 +37,13 @@ model.eval()
 # LOAD NORMALIZATION
 # =========================
 norm = np.load(NORM_PATH)
-mean = norm["mean"]
-std = norm["std"]
+# mean = norm["mean"]
+# std = norm["std"]
+
+mean_degree = norm["mean_degree"]
+std_degree = norm["std_degree"]
+mean_speed=norm["mean_speed"]
+std_speed=norm["std_speed"]
 
 # =========================
 # YOLO
@@ -47,17 +61,6 @@ buffer = deque(maxlen=WINDOW_SIZE)
 prev_kpts = None
 prev_speed = None
 
-# =========================
-# SAME FUNCTIONS
-# =========================
-def normalize_keypoints(kpts_tensor):
-    if torch.all(kpts_tensor == 0):
-        return kpts_tensor
-    center = kpts_tensor.mean(dim=0)
-    kpts = kpts_tensor - center
-    scale = torch.norm(kpts, dim=1).mean() + 1e-6
-    return kpts / scale
-
 
 def calculate_angle(a, b, c):
     ba = a - b
@@ -67,35 +70,14 @@ def calculate_angle(a, b, c):
     return torch.rad2deg(angle)
 
 
-def extract_posture_features(kpts):
-    try:
-        angle1 = calculate_angle(kpts[7], kpts[5], kpts[11])
-        angle2 = calculate_angle(kpts[8], kpts[6], kpts[12])
-        angle3 = calculate_angle(kpts[5], kpts[7], kpts[9])
-        angle4 = calculate_angle(kpts[6], kpts[8], kpts[10])
-        angle5 = calculate_angle(kpts[5], kpts[11], kpts[13])
-        angle6 = calculate_angle(kpts[6], kpts[12], kpts[14])
-        angle7 = calculate_angle(kpts[11], kpts[13], kpts[15])
-        angle8 = calculate_angle(kpts[12], kpts[14], kpts[16])
-
-        dist_wrists = torch.norm(kpts[9] - kpts[10])
-        dist_shoulders = torch.norm(kpts[5] - kpts[6]) + 1e-6
-        ratio = dist_wrists / dist_shoulders
-
-        return torch.tensor([angle1,angle2,angle3,angle4,
-                             angle5,angle6,angle7,angle8,ratio])
-    except:
-        return torch.zeros(9)
-
-
 # =========================
 # FEATURE BUILDER
 # =========================
 def build_feature(kpts):
-    global prev_kpts, prev_speed
+    global prev_kpts, prev_speed, mean_degree, std_degree, mean_speed, std_speed
 
-    # ---------- posture ----------
-    degree_feat = extract_posture_features(kpts)
+    # ---------- features ----------
+    degree_feat, _ = extract_posture_features(kpts)
 
     # ---------- speed ----------
     if prev_kpts is None:
@@ -104,11 +86,11 @@ def build_feature(kpts):
         velocity = kpts - prev_kpts
         speed = torch.norm(velocity, dim=1)
 
-    # ---------- acceleration ----------
-    if prev_speed is None:
-        accel = torch.zeros(17)
-    else:
-        accel = torch.abs(speed - prev_speed)
+    # # ---------- acceleration ----------
+    # if prev_speed is None:
+    #     accel = torch.zeros(17)
+    # else:
+    #     accel = torch.abs(speed - prev_speed)
 
     prev_kpts = kpts.clone()
     prev_speed = speed.clone()
@@ -120,19 +102,28 @@ def build_feature(kpts):
 
     angle_feat = torch.cat([sin_feat, cos_feat], dim=0)  # [18]
 
-    pose_feat = torch.cat([angle_feat, accel], dim=0)    # [35]
+    #norm angle and speed
+    norm_degree = (angle_feat - mean_degree) / std_degree
+    norm_speed = (speed - mean_speed) / std_speed
 
-    # ---------- normalize ----------
-    pose_feat = pose_feat.numpy()
-    pose_feat = (pose_feat - mean) / std
+    #angle and speed concatenate
+    hybrid_feat = np.hstack([norm_degree, norm_speed]).astype(np.float32)  # [35]
+    feat = torch.tensor(hybrid_feat, dtype=torch.float32)
 
-    return pose_feat
+    # # ---------- normalize ----------
+    # pose_feat = pose_feat.numpy()
+    # pose_feat = (pose_feat - mean) / std
+
+    return feat
 
 
 # =========================
 # MAIN LOOP
 # =========================
-cap = cv2.VideoCapture(0)
+
+# use another video for testing
+test_vid = r"G:\.shortcut-targets-by-id\1Ykdzx6UjCe0KPKy_6M4LgCOTxKK6Awgy\videos\processed\cam2\cam2_B1.mp4"
+cap = cv2.VideoCapture(test_vid)
 
 while True:
     ret, frame = cap.read()
@@ -148,6 +139,7 @@ while True:
     else:
         kpts = torch.zeros((17, 2))
 
+    ##CORE!
     feat = build_feature(kpts)
     buffer.append(feat)
 
@@ -156,7 +148,7 @@ while True:
         x = torch.tensor(x).unsqueeze(0).to(DEVICE)
 
         with torch.no_grad():
-            step_logits, _ = model(x)
+            step_logits = model(x)
             probs = torch.softmax(step_logits, dim=1)
             pred = torch.argmax(probs, dim=1)
 
