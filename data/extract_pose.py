@@ -123,7 +123,7 @@ def calculate_angle(a, b, c):
 
 def extract_posture_features(kpts_tensor):
     if torch.all(kpts_tensor == 0):
-        return torch.zeros(9)  # Return a zero vector if no keypoints detected
+        return torch.zeros(8), torch.zeros(1)  # Return zero vectors if no keypoints detected
 
     # angle list 1: [degree between torso and left upper arm, degree between torso and right upper arm]
     # [∠7-5-11，∠8-6-12] 
@@ -150,12 +150,12 @@ def extract_posture_features(kpts_tensor):
     # l(9,10), l(5,6)
         dist_wrists = torch.norm(kpts_tensor[9] - kpts_tensor[10])
         dist_shoulders = torch.norm(kpts_tensor[5] - kpts_tensor[6]) + 1e-6  # Add epsilon to avoid division by zero
-        angle9 = dist_wrists / dist_shoulders
+        ratio9 = dist_wrists / dist_shoulders
 
-        return torch.tensor([angle1, angle2, angle3, angle4, angle5, angle6, angle7, angle8, angle9])
+        return torch.tensor([angle1, angle2, angle3, angle4, angle5, angle6, angle7, angle8]), torch.tensor([ratio9])
     
     except Exception as e:
-        return torch.zeros(9)  # Return a zero vector if any error occurs during angle calculation (e.g., due to missing keypoints)
+        return torch.zeros(8), torch.zeros(1)  # Return zero vectors if any error occurs during angle calculation (e.g., due to missing keypoints)
 # ==========================
 # Main
 # ==========================
@@ -202,11 +202,12 @@ def run_pose_extraction(VIDEO_PATH):
 
 
 # organize features
-        kpts_features = extract_posture_features(kpts)
+        kpts_degree, kpts_ratio = extract_posture_features(kpts)
 
         frames_out.append({
                     "norm_kpts": kpts,
-                    "features": kpts_features,
+                    "features_degree": kpts_degree,
+                    "features_ratio": kpts_ratio,
                     "t": frame_idx / fps
                 })
         if frame_idx % SHOW_EVERY_N_FRAMES == 0:
@@ -220,7 +221,8 @@ def run_pose_extraction(VIDEO_PATH):
 
     # --- Final Data Organization ---
     all_landmarks = torch.stack([f["norm_kpts"] for f in frames_out]) # (T, 17, 2)
-    all_degrees = torch.stack([f["features"] for f in frames_out])   # (T, 9)
+    all_degrees = torch.stack([f["features_degree"] for f in frames_out])   # (T, 8)
+    all_ratios = torch.stack([f["features_ratio"] for f in frames_out])   # (T, 1)
 
     # 1. Calculate Velocity (Speed) - (T-1, 17)
     # diff calculates: x[i+1] - x[i]
@@ -244,9 +246,10 @@ def run_pose_extraction(VIDEO_PATH):
     save_data = {
         "metadata": {"video": VIDEO_PATH, "fps": fps},
         "landmarks": all_landmarks,
-        "features": all_degrees,
-        "speed": speed_padded,
-        "acceleration": accel_padded,
+        "feat_degree": all_degrees,
+        "feat_ratio": all_ratios,
+        "feat_speed": speed_padded,
+        "feat_acc": accel_padded,
         "t_steps": torch.tensor([f["t"] for f in frames_out])
     }
 
@@ -257,10 +260,13 @@ def run_pose_extraction(VIDEO_PATH):
     print(f"\nSaved {len(frames_out)} frames to {OUTPUT_PT}")
 
 
-# if __name__ == "__main__":
+if __name__ == "__main__":
 
-#     VIDEO_DIR = r"G:\.shortcut-targets-by-id\1Ykdzx6UjCe0KPKy_6M4LgCOTxKK6Awgy\videos\processed\cam3"
+    # path = r"G:\.shortcut-targets-by-id\1Ykdzx6UjCe0KPKy_6M4LgCOTxKK6Awgy\videos\processed\cam1\cam1_Y1.mp4"
+    # run_pose_extraction(path)
 
-#     VIDEO_PATHS = [os.path.join(VIDEO_DIR, f) for f in os.listdir(VIDEO_DIR) if f.endswith(".mp4")]
-#     for video_path in VIDEO_PATHS:
-#         run_pose_extraction(video_path)
+    VIDEO_DIR = r"G:\.shortcut-targets-by-id\1Ykdzx6UjCe0KPKy_6M4LgCOTxKK6Awgy\videos\processed\cam3"
+
+    VIDEO_PATHS = [os.path.join(VIDEO_DIR, f) for f in os.listdir(VIDEO_DIR) if f.endswith(".mp4")]
+    for video_path in VIDEO_PATHS:
+        run_pose_extraction(video_path)
