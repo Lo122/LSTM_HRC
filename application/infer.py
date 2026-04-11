@@ -20,7 +20,7 @@ from LSTM.LSTM_model_train import AssistLSTM
 MODEL_PATH = r"C:\Users\loy49\Desktop\REPO\LSTM_HRC\LSTM\lstm_hrc.pth"
 NORM_PATH = r"C:\Users\loy49\Desktop\REPO\LSTM_HRC\norm_stats.npz"
 
-WINDOW_SIZE = 30
+WINDOW_SIZE = 120
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 # =========================

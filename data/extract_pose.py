@@ -194,6 +194,7 @@ def run_pose_extraction(VIDEO_PATH):
         result = results[0]  # get the first result (assuming batch size of 1)
         
         if result.keypoints is not None and len(result.keypoints.xy) > 0:
+            # xy 
             raw_kpts = result.keypoints.xyn[0].cpu()  # get the keypoints for the first detected person
             kpts = normalize_keypoints(raw_kpts)
 
@@ -263,7 +264,7 @@ def run_pose_extraction(VIDEO_PATH):
 if __name__ == "__main__":
     pass
 
-    # path = r"G:\.shortcut-targets-by-id\1Ykdzx6UjCe0KPKy_6M4LgCOTxKK6Awgy\videos\processed\cam1\cam1_Y1.mp4"
+    # path = r"G:\.shortcut-targets-by-id\1Ykdzx6UjCe0KPKy_6M4LgCOTxKK6Awgy\videos\processed\cam3\cam3_Y1.mp4"
     # run_pose_extraction(path)
 
     # VIDEO_DIR = r"G:\.shortcut-targets-by-id\1Ykdzx6UjCe0KPKy_6M4LgCOTxKK6Awgy\videos\processed\cam3"

@@ -6,7 +6,7 @@ from datetime import datetime
 # ==========================
 # CONFIG
 # ==========================
-VIDEO_PATH = r"G:\.shortcut-targets-by-id\1Ykdzx6UjCe0KPKy_6M4LgCOTxKK6Awgy\videos\processed\cam1\cam1_Y4.mp4"
+VIDEO_PATH = r"G:\.shortcut-targets-by-id\1Ykdzx6UjCe0KPKy_6M4LgCOTxKK6Awgy\videos\processed\cam1\cam1_M4.mp4"
 OUTPUT_JSON = os.path.join("data/video_labels", os.path.basename(VIDEO_PATH).replace(".mp4", "_steps.json"))
 
 def sec_from_frame(frame_idx, fps):
