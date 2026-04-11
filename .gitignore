@@ -1,0 +1,26 @@
+# ===== uv (Python) =====
+.venv/
+.venv/**
+
+# uv cache
+.uv/
+.uv/**
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# VS Code
+.vscode/
+
+# fine_tune
+.data/fine_tune/
+.data/fine_tune/**
+
+# yolo 
+*.pt
+*.pth
+
+
+*.json
+*.npz
