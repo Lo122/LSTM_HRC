@@ -79,25 +79,25 @@ Each sequence uses two complementary labels:
 
 | Start: when the human touches a spacer on the table. | End: when the human releases the spacer. |
 | --- | --- |
-| <img src="docs/images/put_spacers_step_start.png" alt="Putting spacers step start" width="280" /> | <img src="docs/images/put_spacers_step_end.png" alt="Putting spacers step end" width="280" /> |
+| <img src="docs/images/labeling_scheme/put_spacers_step_start.png" alt="Putting spacers step start" width="280" /> | <img src="docs/images/labeling_scheme/put_spacers_step_end.png" alt="Putting spacers step end" width="280" /> |
 
 #### 1. Aligning
 
 | Start: when the human touches the piece. | End: when the human releases the piece. |
 | --- | --- |
-| <img src="docs/images/align_step_start.png" alt="Aligning step start" width="280" /> | <img src="docs/images/align_step_end.png" alt="Aligning step end" width="280" /> |
+| <img src="docs/images/labeling_scheme/align_step_start.png" alt="Aligning step start" width="280" /> | <img src="docs/images/labeling_scheme/align_step_end.png" alt="Aligning step end" width="280" /> |
 
 #### 2. Screwing
 
 | Start: when the human picks up the screwdriver. | End: when the human puts the screwdriver away. |
 | --- | --- |
-| <img src="docs/images/screwing_step_start.png" alt="Screwing step start" width="280" /> | <img src="docs/images/screwing_step_end.png" alt="Screwing step end" width="280" /> |
+| <img src="docs/images/labeling_scheme/screwing_step_start.png" alt="Screwing step start" width="280" /> | <img src="docs/images/labeling_scheme/screwing_step_end.png" alt="Screwing step end" width="280" /> |
 
 #### 3. Move spacers
 
 | Start: when the human touches the spacer. | End: when the human releases the spacer. |
 | --- | --- |
-| <img src="docs/images/move_spacers_step_start.png" alt="Move spacers step start" width="280" /> | <img src="docs/images/move_spacers_step_end.png" alt="Move spacers step end" width="280" /> |
+| <img src="docs/images/labeling_scheme/move_spacers_step_start.png" alt="Move spacers step start" width="280" /> | <img src="docs/images/labeling_scheme/move_spacers_step_end.png" alt="Move spacers step end" width="280" /> |
 
 ### Status ID Labeling
 
@@ -107,13 +107,13 @@ Each sequence uses two complementary labels:
 
 | Start: when the spacer touches the ceiling frame. | End: when the human releases the spacer. |
 | --- | --- |
-| <img src="docs/images/put_spacers_status_start.png" alt="Putting spacers status start" width="280" /> | <img src="docs/images/put_spacers_step_end.png" alt="Putting spacers status end" width="280" /> |
+| <img src="docs/images/labeling_scheme/put_spacers_status_start.png" alt="Putting spacers status start" width="280" /> | <img src="docs/images/labeling_scheme/put_spacers_step_end.png" alt="Putting spacers status end" width="280" /> |
 
 #### 1. Aligning
 
 | Start: when the human touches the piece. | End: when the human releases the piece. |
 | --- | --- |
-| <img src="docs/images/align_step_start.png" alt="Aligning status start" width="280" /> | <img src="docs/images/align_step_end.png" alt="Aligning status end" width="280" /> |
+| <img src="docs/images/labeling_scheme/align_step_start.png" alt="Aligning status start" width="280" /> | <img src="docs/images/labeling_scheme/align_step_end.png" alt="Aligning status end" width="280" /> |
 
 #### 2. Screwing
 
@@ -124,19 +124,19 @@ Start examples:
 
 | Example 1 | Example 2 | Example 3 |
 | --- | --- | --- |
-| <img src="docs/images/screwing_status_start_01.png" alt="Screwing status start example 1" width="210" /> | <img src="docs/images/screwing_status_start_02.png" alt="Screwing status start example 2" width="210" /> | <img src="docs/images/screwing_status_start_03.png" alt="Screwing status start example 3" width="210" /> |
+| <img src="docs/images/labeling_scheme/screwing_status_start_01.png" alt="Screwing status start example 1" width="210" /> | <img src="docs/images/labeling_scheme/screwing_status_start_02.png" alt="Screwing status start example 2" width="210" /> | <img src="docs/images/labeling_scheme/screwing_status_start_03.png" alt="Screwing status start example 3" width="210" /> |
 
 End examples:
 
 | Example 1 | Example 2 | Example 3 |
 | --- | --- | --- |
-| <img src="docs/images/screwing_status_end_01.png" alt="Screwing status end example 1" width="210" /> | <img src="docs/images/screwing_status_end_02.png" alt="Screwing status end example 2" width="210" /> | <img src="docs/images/screwing_status_end_03.png" alt="Screwing status end example 3" width="210" /> |
+| <img src="docs/images/labeling_scheme/screwing_status_end_01.png" alt="Screwing status end example 1" width="210" /> | <img src="docs/images/labeling_scheme/screwing_status_end_02.png" alt="Screwing status end example 2" width="210" /> | <img src="docs/images/labeling_scheme/screwing_status_end_03.png" alt="Screwing status end example 3" width="210" /> |
 
 #### 3. Move spacers
 
 | Start: when the human touches the spacer. | End: when the human releases the spacer. |
 | --- | --- |
-| <img src="docs/images/move_spacers_step_start.png" alt="Move spacers status start" width="280" /> | <img src="docs/images/move_spacers_step_end.png" alt="Move spacers status end" width="280" /> |
+| <img src="docs/images/labeling_scheme/move_spacers_step_start.png" alt="Move spacers step start" width="280" /> | <img src="docs/images/labeling_scheme/move_spacers_step_end.png" alt="Move spacers step end" width="280" /> |
 
 ## Post-processing
 
