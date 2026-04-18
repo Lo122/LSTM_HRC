@@ -228,7 +228,9 @@ def run_pose_extraction(VIDEO_PATH):
     # 1. Calculate Velocity (Speed) - (T-1, 17)
     # diff calculates: x[i+1] - x[i]
     velocity = torch.diff(all_landmarks, dim=0)
-    speed = torch.norm(velocity, dim=2) 
+    # speed = torch.norm(velocity, dim=2) 
+    # dont norm the speed
+    speed = velocity  # (T-1, 17, 2) - keep x and y components for more info (direction + magnitude)
     
     # 2. Calculate Acceleration - (T-2, 17)
     # accel calculates: |speed[i+1] - speed[i]|
