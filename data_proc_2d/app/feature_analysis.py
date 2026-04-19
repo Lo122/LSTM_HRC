@@ -5,14 +5,18 @@ from pathlib import Path
 
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
-PROJECT_SRC_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_SRC_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_SRC_ROOT))
 
-# from src.utilities import log_utils
-from src.file_io_utils import load_torch, save_json, load_step_ids_from_json, load_elan_label_data
-from data_proc_2d.src import pose_analysis_yolo
-from data_proc_2d.src import plot_utils
+if str(PROJECT_SRC_ROOT / "data_proc_2d") not in sys.path:
+    sys.path.insert(0, str(PROJECT_SRC_ROOT / "data_proc_2d"))
+
+from utilities import log_utils, file_io
+from src.file_io_utils import load_torch, load_step_ids_from_json, load_elan_label_data
+from src import pose_analysis_yolo
+from src import plot_utils
+from src.annotation_config import ANNOTATION_CONFIG
 
 
 def _get_optional_tensor(data: dict, *names: str):
@@ -51,7 +55,7 @@ def main():
     elan_step_label_list = {}
     for label_file in label_files:
         logger.info("Found ELAN label file: %s", label_file)
-        label_info, video_file_name = load_elan_label_data(label_file, logger=logger)
+        label_info, video_file_name = load_elan_label_data(label_file, config=ANNOTATION_CONFIG, logger=logger)
         elan_step_label_list[video_file_name] = {"labels": label_info}
 
 
@@ -73,7 +77,7 @@ def main():
         except Exception as error:
             logger.exception("Failed to process %s: %s", pt_file, error)
 
-    save_json(results, str(output_json), logger=logger)
+    file_io.save_json(results, str(output_json), logger=logger)
     logger.info("Feature extraction complete. Results saved to %s", output_json)
 
 
