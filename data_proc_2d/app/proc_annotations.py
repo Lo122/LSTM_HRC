@@ -8,8 +8,10 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 from utilities import file_io, log_utils
 from src import file_io_utils
+from src.annotation_config import ANNOTATION_CONFIG
 
 
+RENAME_ORIGINAL_FILES = False
 VIDEO_SOURCE_ROOT_PATH = Path(r"G:\.shortcut-targets-by-id\1Ykdzx6UjCe0KPKy_6M4LgCOTxKK6Awgy\Videos\annotations")
 GOOGLE_DRIVE_ROOT_PATH = Path(r"G:\.shortcut-targets-by-id\1Ykdzx6UjCe0KPKy_6M4LgCOTxKK6Awgy\Videos")
 LOG_ROOT_PATH = Path(__file__).resolve().parents[2] / "logs"
@@ -29,8 +31,8 @@ def main():
     save_annotations_root_path = GOOGLE_DRIVE_ROOT_PATH / "annotations"
     save_json_root_path = GOOGLE_DRIVE_ROOT_PATH / "dataset" / "annotations" 
     
-    for csv_file in sorted(VIDEO_SOURCE_ROOT_PATH.rglob(f"*.csv")):
-        output_dict, video_file_name = file_io_utils.load_elan_label_data(csv_file)
+    for csv_file in sorted(VIDEO_SOURCE_ROOT_PATH.glob(f"*.csv")):
+        output_dict, video_file_name = file_io_utils.load_elan_label_data(csv_file, config=ANNOTATION_CONFIG)
         if video_file_name is None:
             logger.warning("SKIP %s: failed to load ELAN label data", csv_file)
             continue
@@ -47,12 +49,12 @@ def main():
         save_annotations_file_path = save_annotations_root_path / f"cam-{camera_id}" / \
             f"{base_file_name}.csv"
         
-        upload_file(csv_file, save_annotations_file_path, rename=True, logger=logger)
+        upload_file(csv_file, save_annotations_file_path, rename=RENAME_ORIGINAL_FILES, logger=logger)
         file_io.save_json(output_dict, str(save_json_file_path), logger=logger)
         
         src_file_path = csv_file.with_suffix(".eaf")
         if src_file_path.exists():
-            upload_file(src_file_path, save_annotations_file_path.with_suffix(".eaf"), rename=True, logger=logger)
+            upload_file(src_file_path, save_annotations_file_path.with_suffix(".eaf"), rename=RENAME_ORIGINAL_FILES, logger=logger)
 
 
 # copy file and optionally rename it before saving into the target folder

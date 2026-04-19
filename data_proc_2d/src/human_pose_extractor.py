@@ -15,47 +15,22 @@ from ultralytics import YOLO
 
 sys.path.append(str(Path(__file__).resolve().parent))
 from file_io_utils import save_torch
+from filter_utils import RealTimeSGFilter, FILTER_CONFIG
+from viewer.view.overlay import draw_pose_overlay
 
 
-class _OneEuroFilter:
-    """Per-scalar One Euro Filter (Casiez et al., 2012).
-
-    Smooths a 1-D signal adaptively: slow motion gets heavy smoothing,
-    fast motion gets light smoothing to avoid lag.
-    """
-
-    def __init__(self, freq: float, min_cutoff: float = 1.0, beta: float = 0.05, d_cutoff: float = 1.0) -> None:
-        self._freq = max(freq, 1e-6)
-        self._min_cutoff = min_cutoff
-        self._beta = beta
-        self._d_cutoff = d_cutoff
-        self._x_prev: float | None = None
-        self._dx_prev: float = 0.0
-
-    @staticmethod
-    def _alpha(cutoff: float, freq: float) -> float:
-        tau = 1.0 / (2.0 * math.pi * cutoff)
-        return 1.0 / (1.0 + tau * freq)
-
-    def __call__(self, x: float) -> float:
-        if self._x_prev is None:
-            self._x_prev = x
-            return x
-        dx = (x - self._x_prev) * self._freq
-        a_d = self._alpha(self._d_cutoff, self._freq)
-        dx_hat = a_d * dx + (1.0 - a_d) * self._dx_prev
-        cutoff = self._min_cutoff + self._beta * abs(dx_hat)
-        a = self._alpha(cutoff, self._freq)
-        x_hat = a * x + (1.0 - a) * self._x_prev
-        self._x_prev = x_hat
-        self._dx_prev = dx_hat
-        return x_hat
-    
-
-
-class SGFilter():
-    def __init__(self) -> None:
-        pass
+SMOOTHED_SEG_COLOURS = {
+    "head": "#f9c74f",
+    "arm": "#90be6d",
+    "torso": "#4ecdc4",
+    "leg": "#577590",
+}
+SMOOTHED_JOINT_COLOUR = "#ff6b35"
+SMOOTHED_BODY_CENTER_CFG = [
+    ("mid-hip", "#ff6b35"),
+    ("mid-shoulder", "#00b4d8"),
+    ("half-body", "#c77dff"),
+]
 
 
 class VideoPoseExtractor:
@@ -68,7 +43,6 @@ class VideoPoseExtractor:
         show_every_n_frames: int = 20,
         use_visibility: bool = False,
         use_tracking: bool = True,
-        smoothing: str = "one_euro",
         logger: logging.Logger | None = None,
     ) -> None:
         
@@ -79,64 +53,16 @@ class VideoPoseExtractor:
         self.show_every_n_frames = show_every_n_frames
         self.use_visibility = use_visibility
         self.use_tracking = use_tracking
-        self.smoothing = smoothing
         self.logger = logger or logging.getLogger(__name__)
 
         self.device = self._get_inference_device()
         self.yolo_model = YOLO(self.model_path)
-        self.logger.info("Tracking: %s | Smoothing: %s", self.use_tracking, self.smoothing)
-
-
-    @staticmethod
-    def _sec_from_frame(frame_idx: int, fps: float) -> float:
-        return frame_idx / fps if fps > 0 else 0.0
-
-
-    @staticmethod
-    def _normalize_keypoints(kpts_tensor: torch.Tensor) -> torch.Tensor:
-        if torch.all(kpts_tensor == 0):
-            return kpts_tensor
-
-        center = kpts_tensor.mean(dim=0)
-        kpts_preprocessed = kpts_tensor - center
-
-        distances = torch.norm(kpts_preprocessed, dim=1)
-        scale = distances.mean() + 1e-6
-        return kpts_preprocessed / scale
-
-
-    @staticmethod
-    def _get_inference_device() -> str:
-        if not torch.cuda.is_available():
-            return "cpu"
-
-        try:
-            torch.zeros(1, device="cuda")
-            return "cuda"
-        except Exception as error:
-            logging.getLogger(__name__).warning("CUDA unavailable, falling back to CPU: %s", error)
-            return "cpu"
-
-
-    def _smooth_landmarks(self, landmarks: torch.Tensor, fps: float) -> torch.Tensor:
-        """Apply One Euro Filter per keypoint per axis over the time dimension."""
-        arr = landmarks.numpy()           # (T, K, D)
-        T, K, D = arr.shape
-        freq = fps if fps > 0 else 30.0
-        out = arr.copy()
-        for k in range(K):
-            for d in range(D):
-                f = _OneEuroFilter(freq=freq)
-                for t in range(T):
-                    out[t, k, d] = f(float(arr[t, k, d]))
-        return torch.from_numpy(out.astype(np.float32))
-
-
-    def _save_posture_data(self, save_data: Dict[str, Any], num_frames: int) -> None:
-        save_torch(save_data, self.output_pt, logger=self.logger)
-        self.logger.info("Saved %s frames to %s", num_frames, self.output_pt)
-
-
+        self.filter = RealTimeSGFilter(
+            window_size=FILTER_CONFIG["window_size"],
+            poly_order=FILTER_CONFIG["poly_order"]
+            )
+    
+    
     def run_pose_extraction(self) -> Dict[str, Any]:
         if not os.path.exists(self.video_path):
             raise FileNotFoundError(f"Video not found: {self.video_path}")
@@ -171,7 +97,6 @@ class VideoPoseExtractor:
         self.logger.info("==============================")
 
         frame_idx = 0
-
         for _ in tqdm(range(total_frames), desc="Extracting pose"):
             ret, frame = cap.read()
             if not ret:
@@ -185,23 +110,38 @@ class VideoPoseExtractor:
             else:
                 results = self.yolo_model(frame, device=self.device, verbose=False)
             result = results[0]
-            plotted_frame = result.plot()
-
-            if video_writer is not None:
-                video_writer.write(plotted_frame)
 
             if result.keypoints is not None and len(result.keypoints.xy) > 0:
                 if self.use_visibility and hasattr(result.keypoints, "data"):
                     raw_kpts = result.keypoints.data[0].cpu()[..., :2]
+                    keypoints_are_normalized = False
                 else:
                     raw_kpts = result.keypoints.xyn[0].cpu()[..., :2]
-                kpts = self._normalize_keypoints(raw_kpts.clone())
+                    keypoints_are_normalized = True
+                    
+                smoothed_kpts = self.filter.update(raw_kpts.clone())
+                kpts = self._normalize_keypoints(smoothed_kpts)
+                
             else:
                 raw_kpts = torch.zeros((17, 2), dtype=torch.float32)
                 kpts     = torch.zeros((17, 2), dtype=torch.float32)
+                smoothed_kpts = torch.zeros((17, 2), dtype=torch.float32)
+                keypoints_are_normalized = True
+
+            plotted_frame = self._render_smoothed_pose_frame(
+                frame_bgr=frame,
+                smoothed_kpts=smoothed_kpts,
+                frame_width=frame_width,
+                frame_height=frame_height,
+                normalized_input=keypoints_are_normalized,
+            )
+
+            if video_writer is not None:
+                video_writer.write(plotted_frame)
 
             frames_out.append({
                 "norm_kpts": kpts,
+                "smoothed_kpts": smoothed_kpts,
                 "raw_kpts":  raw_kpts,   # xyn in [0,1] — used for video overlay
                 "t":         torch.tensor(t_sec, dtype=torch.float32),
             })
@@ -214,17 +154,11 @@ class VideoPoseExtractor:
         cap.release()
         if video_writer is not None:
             video_writer.release()
-            self.logger.info("Saved annotated video to %s", self.output_video)
+            self.logger.info("Saved smoothed pose video to %s", self.output_video)
         cv2.destroyAllWindows()
 
         if not frames_out:
             raise RuntimeError("No frames were processed. Check your input video path and codec support.")
-
-        landmarks = torch.stack([frame["norm_kpts"] for frame in frames_out])
-
-        if self.smoothing == "one_euro":
-            self.logger.info("Applying One Euro Filter to %s frames ...", len(frames_out))
-            landmarks = self._smooth_landmarks(landmarks, fps)
 
         save_data = {
             "metadata": {
@@ -233,17 +167,106 @@ class VideoPoseExtractor:
                 "model": self.model_path,
                 "device": self.device,
                 "tracking": self.use_tracking,
-                "smoothing": self.smoothing,
+                "filter_config": {
+                    "window_size": self.filter.window_size,
+                    "poly_order": self.filter.poly_order,
+                },
             },
-            "landmarks":     landmarks,
+            "norm_landmarks":     torch.stack([frame["norm_kpts"] for frame in frames_out]),
+            "smoothed_landmarks":     torch.stack([frame["smoothed_kpts"] for frame in frames_out]),
             "raw_landmarks": torch.stack([frame["raw_kpts"] for frame in frames_out]),
             "t_steps":       torch.stack([frame["t"] for frame in frames_out]),
         }
 
         self._save_posture_data(save_data, len(frames_out))
-
         return save_data
+            
 
+    # =========================================================================
+    # Internal helper methods
+    # =========================================================================
+    @staticmethod
+    def _sec_from_frame(frame_idx: int, fps: float) -> float:
+        return frame_idx / fps if fps > 0 else 0.0
+
+
+    @staticmethod
+    def _normalize_keypoints(kpts_tensor: torch.Tensor, nomalize_by_uppper_body_center:bool = True) -> torch.Tensor:
+        if torch.all(kpts_tensor == 0):
+            return kpts_tensor
+
+        if nomalize_by_uppper_body_center:
+            center = kpts_tensor[[5, 6, 11, 12]].mean(dim=0)  # shoulders and hips center   
+        else:
+            center = kpts_tensor.mean(dim=0)
+        kpts_preprocessed = kpts_tensor - center
+
+        distances = torch.norm(kpts_preprocessed, dim=1)
+        scale = distances.mean() + 1e-6
+        return kpts_preprocessed / scale
+
+
+    @staticmethod
+    def _get_inference_device() -> str:
+        if not torch.cuda.is_available():
+            return "cpu"
+
+        try:
+            torch.zeros(1, device="cuda")
+            return "cuda"
+        except Exception as error:
+            logging.getLogger(__name__).warning("CUDA unavailable, falling back to CPU: %s", error)
+            return "cpu"
+
+
+    def _save_posture_data(self, save_data: Dict[str, Any], num_frames: int) -> None:
+        save_torch(save_data, self.output_pt, logger=self.logger)
+        self.logger.info("Saved %s frames to %s", num_frames, self.output_pt)
+
+
+    @staticmethod
+    def _to_normalized_keypoints(
+        kpts_tensor: torch.Tensor,
+        frame_width: int,
+        frame_height: int,
+        normalized_input: bool,
+    ) -> np.ndarray:
+        kpts_np = kpts_tensor.detach().cpu().numpy().astype(np.float32, copy=False)
+        if normalized_input:
+            return np.clip(kpts_np, 0.0, 1.0)
+
+        scale = np.array([max(frame_width, 1), max(frame_height, 1)], dtype=np.float32)
+        return np.clip(kpts_np / scale, 0.0, 1.0)
+
+
+    def _render_smoothed_pose_frame(
+        self,
+        frame_bgr: np.ndarray,
+        smoothed_kpts: torch.Tensor,
+        frame_width: int,
+        frame_height: int,
+        normalized_input: bool,
+    ) -> np.ndarray:
+        if torch.all(smoothed_kpts == 0):
+            return frame_bgr.copy()
+
+        frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+        overlay_rgb = draw_pose_overlay(
+            frame_rgb=frame_rgb,
+            kpts_xyn=self._to_normalized_keypoints(
+                smoothed_kpts,
+                frame_width=frame_width,
+                frame_height=frame_height,
+                normalized_input=normalized_input,
+            ),
+            seg_colours=SMOOTHED_SEG_COLOURS,
+            joint_colour=SMOOTHED_JOINT_COLOUR,
+            body_center_cfg=SMOOTHED_BODY_CENTER_CFG,
+        )
+        return cv2.cvtColor(overlay_rgb, cv2.COLOR_RGB2BGR)
+
+
+    
 
 
 if __name__ == "__main__":

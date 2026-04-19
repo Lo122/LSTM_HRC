@@ -51,8 +51,10 @@ JOINT_ANGLE_TRIPLETS: list[tuple[str, int, int, int]] = [
     ("right_elbow",     6,  8, 10),
     ("left_shoulder",   7,  5, 11),
     ("right_shoulder",  8,  6, 12),
-    # ("left_knee",      11, 13, 15),
-    # ("right_knee",     12, 14, 16),
+    ("left_hip",       5, 11, 13),
+    ("right_hip",      6, 12, 14),
+    ("left_knee",      11, 13, 15),
+    ("right_knee",     12, 14, 16),
 ]
 
 JOINT_ANGLE_TRIPLETS_CAL: list[tuple[str, int, int, int]] = [
@@ -62,7 +64,7 @@ JOINT_ANGLE_TRIPLETS_CAL: list[tuple[str, int, int, int]] = [
 
 
 RATIO_BETWEEN_DISTS: list[tuple[str, tuple[str, str], tuple[str, str]]] = [
-    # ("elbow/shoulder",      ("left_elbow", "right_elbow"), ("left_shoulder", "right_shoulder")),
+    ("elbow/shoulder",      ("left_elbow", "right_elbow"), ("left_shoulder", "right_shoulder")),
     ("wrist/shoulder",     ("right_wrist", "left_wrist"),  ("left_shoulder", "right_shoulder")),
     # ("wrist/elbow",       ("right_wrist", "left_wrist"),  ("left_elbow", "right_elbow")),
 ]

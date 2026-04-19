@@ -170,6 +170,15 @@ def _extract_from_description(text: str, logger: logging.Logger | None = None) -
     return {}
 
 
+
+def modify_file_name(rel_path: Path, prefix: str = "features") -> Path:
+    stem = rel_path.stem
+    suffix_after_separator = stem.split("__", 1)[1] if "__" in stem else stem
+    new_stem = f"{prefix}__{suffix_after_separator}"
+
+    return rel_path.with_name(new_stem + rel_path.suffix)
+
+
 if __name__ == "__main__":
     root_path = Path(r"G:\My Drive\University of Stuttgart\ITECH_Thesis\ELAN")
     file_path = root_path / "cam1_B1.csv"
