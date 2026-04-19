@@ -30,4 +30,5 @@ environment.yml
 
 data_proc_2d/results/video_analysis_yolo/databasa/
 data_proc_2d/results/video_analysis_yolo/plots/
-*.mp4design/gh_rhino/setup.3dm
+*.mp4
+*.3dm
