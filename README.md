@@ -138,6 +138,53 @@ End examples:
 | --- | --- |
 | <img src="docs/images/labeling_scheme/move_spacers_step_start.png" alt="Move spacers step start" width="280" /> | <img src="docs/images/labeling_scheme/move_spacers_step_end.png" alt="Move spacers step end" width="280" /> |
 
+## Feature Extraction
+
+Each extracted feature file is saved as `features__cam-XX_uid-YY_take-ZZ.pt`.
+
+The filename is derived from the corresponding pose file:
+
+`video__cam-XX_uid-YY_take-ZZ_pose.pt` -> `features__cam-XX_uid-YY_take-ZZ.pt`
+
+Each `.pt` file is a Python dictionary saved with PyTorch. The source pose tensor is read from `proc_landmarks` with shape `(T, 17, 2)`, where `T` is the number of frames and `17` follows the COCO keypoint order.
+
+```python
+feature_dict = {
+    "metadata": {...},
+    "velocity": ...,
+    "acceleration": ...,
+    "velocity_xy": ...,
+    "acceleration_xy": ...,
+    "pol_vectors": ...,
+    "pol_angles": ...,
+    "angles": ...,
+    "ratios": ...,
+    "dist_ratios": ...,
+}
+```
+
+### Top-level fields
+
+| Key | Shape | Description |
+| --- | --- | --- |
+| `metadata` | dict | Metadata copied from the source pose file. Common entries include video path, FPS, model path, device, and tracking flag. |
+| `velocity_scale` | `(T, 17)` | Per-keypoint velocity magnitude from `torch.diff(landmarks, dim=0)`. The missing leading frame is padded with the first detected velocity. |
+| `acceleration_scale` | `(T, 17)` | Per-keypoint acceleration magnitude from `torch.diff(velocity, dim=0)`. The missing leading frames are padded with the first detected acceleration. |
+| `velocity_xy` | `(T, 34)` | XY velocity vectors, flattened from `(T, 17, 2)`. The missing leading frame is padded with the first detected velocity. |
+| `acceleration_xy` | `(T, 34)` | XY acceleration vectors, flattened from `(T, 17, 2)`. The missing leading frames are padded with the first detected acceleration. |
+| `pol_vectors` | `(T, 34)` | Keypoint offsets from the body center, flattened from `(T, 17, 2)`. |
+| `pol_angles` | `(T, 17)` | Polar angle of each keypoint around the body center in degrees. |
+| `joint_angles` | `(T, 9)` | Joint-angle features in degrees. (0: left_elbow, 1: right_elbow, 2: left_shoulder, 3: right_shoulder, 4: left_hip, 5: right_hip, 6: left_knee, 7: right_knee, 8: neck) |
+| `ratios` | `(T, 2)` | Ratios between configured inter-keypoint distances. (0: elbow/shoulder, 1: wrist/shoulder) |
+| `dist_ratios` | `(T, 17)` | Distance of each keypoint from the body center, normalized by a hip-based baseline distance. |
+
+### Feature definitions
+
+- Body center for `pol_vectors`, `pol_angles`, and `dist_ratios`: mean of `left_hip`, `right_hip`, `left_shoulder`, and `right_shoulder`.
+- Baseline for `dist_ratios`: distance between that body center and the mean of `left_hip` and `right_hip`.
+- Angle column order in `angles`: `left_elbow`, `right_elbow`, `left_shoulder`, `right_shoulder`, `left_hip`, `right_hip`, `left_knee`, `right_knee`, `neck`.
+- Ratio column order in `ratios`: `elbow/shoulder`, `wrist/shoulder`.
+
 ## Post-processing
 
 The post-processing stage currently uses two groups of input parameters.
@@ -156,7 +203,7 @@ The post-processing stage currently uses two groups of input parameters.
 
 - Robot action time from picking up a part or tool to placing it, based on:
     - pickup location
-    - placement location
+    - assembly location
     - robot trajectory
 - Robot approach time to the pickup location, based on:
     - approach trajectory
