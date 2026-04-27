@@ -8,7 +8,7 @@ import torch
 PROJECT_SRC_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_SRC_ROOT))
-    
+from plot_utils import PanelData 
 from yolo_pose_config import (
     KEYPOINT_NAMES,
     JOINT_ANGLE_TRIPLETS,
@@ -16,6 +16,135 @@ from yolo_pose_config import (
     CENTER_CFG,
     RATIO_BETWEEN_DISTS,
 )
+
+# Plot Configuration 
+XY_AXES = ("x", "y")
+
+
+def build_feature_dataframes(features: dict) -> dict[str, pd.DataFrame]:
+    feature_dataframes: dict[str, pd.DataFrame] = {}
+
+    for feature_name, value in features.items():
+        if isinstance(value, torch.Tensor):
+            array = value.detach().cpu().numpy()
+        elif isinstance(value, np.ndarray):
+            array = value
+        else:
+            continue
+
+        array = np.asarray(array)
+
+        if array.ndim == 0:
+            continue
+
+        if array.ndim == 1:
+            feature_dataframes[f"{feature_name}_db"] = pd.DataFrame({feature_name: array})
+            continue
+
+        part = pd.DataFrame(array.reshape(array.shape[0], -1))
+        part.columns = _feature_column_names(feature_name, part.shape[1])
+        feature_dataframes[f"{feature_name}_db"] = part
+
+    return feature_dataframes
+
+
+def _feature_column_names(feature_name: str, width: int) -> list[str]:
+    named_columns = {
+        "velocity_scale": _keypoint_feature_names("velocity"),
+        "acceleration_scale": _keypoint_feature_names("acceleration"),
+        "velocity_x": _keypoint_feature_names("velocity_x"),
+        "velocity_y": _keypoint_feature_names("velocity_y"),
+        "acceleration_x": _keypoint_feature_names("acceleration_x"),
+        "acceleration_y": _keypoint_feature_names("acceleration_y"),
+        "velocity_xy": _keypoint_xy_feature_names("velocity"),
+        "acceleration_xy": _keypoint_xy_feature_names("acceleration"),
+        "pol_vectors_x": _keypoint_feature_names("polar_vector_x"),
+        "pol_vectors_y": _keypoint_feature_names("polar_vector_y"),
+        "pol_vectors": _keypoint_xy_feature_names("polar_vector"),
+        "pol_angles": _keypoint_feature_names("polar_angle_deg"),
+        "joint_angles": _joint_angle_feature_names(),
+        "ratios": _ratio_feature_names(),
+        "dist_ratios": _keypoint_feature_names("distance_from_center_ratio"),
+    }
+    columns = named_columns.get(feature_name)
+    if columns is None or len(columns) != width:
+        return [f"{feature_name}_{index}" for index in range(width)]
+    return columns
+
+
+def _sanitize_feature_label(name: str) -> str:
+    return name.lower().replace("/", "_over_").replace(" ", "_").replace("-", "_")
+
+
+def _keypoint_feature_names(suffix: str) -> list[str]:
+    return [f"{keypoint}_{suffix}" for keypoint in KEYPOINT_NAMES]
+
+
+def _keypoint_xy_feature_names(suffix: str) -> list[str]:
+    return [
+        f"{keypoint}_{suffix}__{axis}"
+        for keypoint in KEYPOINT_NAMES
+        for axis in XY_AXES
+    ]
+
+
+def _joint_angle_feature_names() -> list[str]:
+    joint_names = [name for name, *_ in JOINT_ANGLE_TRIPLETS]
+    joint_names.extend(name for name, *_ in JOINT_ANGLE_TRIPLETS_CAL)
+    return [f"{_sanitize_feature_label(name)}_angle_deg" for name in joint_names]
+
+
+def _ratio_feature_names() -> list[str]:
+    return [
+        f"{_sanitize_feature_label(name)}_ratio"
+        for name, *_ in RATIO_BETWEEN_DISTS
+    ]
+
+
+
+def build_panel_data(
+    feature_dataframes: dict[str, pd.DataFrame], panel_config: list[tuple[str, str, str, str]]
+) -> list[PanelData]:
+    panel_data: list[PanelData] = []
+
+    for dataframe_name, ylabel, panel_title, yscale in panel_config:
+        feature_df = feature_dataframes.get(dataframe_name)
+        if feature_df is None or feature_df.empty:
+            continue
+
+        columns = list(feature_df.columns)
+        panel_data.append(PanelData(df=feature_df, names=columns, cols=columns, ylabel=ylabel, title=panel_title, yscale=yscale))
+
+    return panel_data
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 def _coerce_kinematic_tensor(values: torch.Tensor, feature_name: str) -> torch.Tensor:
