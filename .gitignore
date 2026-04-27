@@ -28,7 +28,12 @@ logs
 model_data/
 environment.yml
 
-data_proc_2d/results/video_analysis_yolo/databasa/
+data_proc_2d/results/video_analysis_yolo/
 data_proc_2d/results/video_analysis_yolo/plots/
+data_proc_2d/results/**/*.csv
+data_proc_2d/results/**/*.png
+design/gh_rhino/*.3dm
+design/gh_rhino/*.3dmbak
+design/gh_rhino/*.gh
+
 *.mp4
-*.3dm

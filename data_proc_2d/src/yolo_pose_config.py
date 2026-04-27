@@ -53,8 +53,8 @@ JOINT_ANGLE_TRIPLETS: list[tuple[str, int, int, int]] = [
     ("right_shoulder",  8,  6, 12),
     ("left_hip",       5, 11, 13),
     ("right_hip",      6, 12, 14),
-    ("left_knee",      11, 13, 15),
-    ("right_knee",     12, 14, 16),
+    # ("left_knee",      11, 13, 15),
+    # ("right_knee",     12, 14, 16),
 ]
 
 JOINT_ANGLE_TRIPLETS_CAL: list[tuple[str, int, int, int]] = [

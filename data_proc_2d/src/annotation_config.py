@@ -8,4 +8,9 @@ ANNOTATION_CONFIG = {
     "Place the Piece": 4,
     "Screw": 5,
     "Mistake": 6,
+    "Place Spacer - BL": 7,
+    "Remove Spacer - BL": 8,
+    "Align - BL": 9,
+    "Place the Piece - BL": 10,
+    "Screw - BL": 11
 }
