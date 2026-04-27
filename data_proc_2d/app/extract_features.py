@@ -22,11 +22,9 @@ from src import feature_extraction
 from src import labelling_utils
 from src.yolo_pose_config import JOINT_ANGLE_TRIPLETS, JOINT_ANGLE_TRIPLETS_CAL, RATIO_BETWEEN_DISTS
 from utilities.file_io import load_json
+from src import plot_utils
 
-ANNOTATION_LABEL_BY_ID = {
-    annotation_id: annotation_name
-    for annotation_name, annotation_id in ANNOTATION_CONFIG.items()
-}
+
 
 label_config = labelling_utils.LabelConfiguration(
     buffer=100.0,
@@ -35,6 +33,11 @@ label_config = labelling_utils.LabelConfiguration(
 
 EXCLUDE_NODES = [13, 14, 15, 16]  # exclude knees and ankles for now due to frequent occlusion and noise in the dataset
 EXCLUDE_STEPS = [7, 8, 9, 10, 11]
+ACTIVE_LABEL_IDS = sorted(
+    annotation_id
+    for annotation_id in set(ANNOTATION_CONFIG.values())
+    if annotation_id not in EXCLUDE_STEPS
+)
 SAVE_PLOTS = True
 SHOW_PLOTS = False
 
@@ -76,7 +79,7 @@ def main():
                 "features": features,
                 "labels": labels
             }
-            _save_features(output_data, out_pt_dir / pt_file.name, logger)
+            # _save_features(output_data, out_pt_dir / pt_file.name, logger)
 
         except Exception as error:
             logger.exception("Failed to process %s: %s", pt_file, error)
@@ -213,7 +216,7 @@ def _extract_labels(extract_user_id: str, folder_path: Path, frame_size: int,
 
     
     # plot labels for debugging
-    _plot_label_debug(
+    plot_utils._plot_label_debug(
         extract_user_id,
         step_id_db,
         step_id_plateau_db,
@@ -225,7 +228,6 @@ def _extract_labels(extract_user_id: str, folder_path: Path, frame_size: int,
         save_debug_plots=save_plots,
         save_file_path=save_file_path,
     )
-    
     
     return labels
 
@@ -310,7 +312,7 @@ def _build_label_matrix(
             max_value=1.0,
         )
 
-    return label_db
+    return _ensure_db_columns(label_db, frame_index)
 
 
 def _build_progress_matrix(
@@ -348,7 +350,12 @@ def _build_progress_matrix(
             frame_index,
         )
 
-    return progress_db
+    return _ensure_db_columns(progress_db, frame_index)
+
+
+def _ensure_db_columns(label_db: pd.DataFrame, frame_index: pd.RangeIndex) -> pd.DataFrame:
+    """Force a stable set of label columns so vectors are always (num_frames, 7)."""
+    return label_db.reindex(index=frame_index, columns=ACTIVE_LABEL_IDS, fill_value=0.0)
 
 
 def _build_progress_series_for_piece_group(
@@ -429,132 +436,7 @@ def _highest_value_value_per_frame(
     return label_db.max(axis=1)
 
 
-def _plot_label_debug(
-    extract_user_id: str,
-    step_id_db: pd.DataFrame,
-    step_id_plateau_db: pd.DataFrame,
-    status_id_db: pd.DataFrame,
-    status_id_plateau_db: pd.DataFrame,
-    task_progress_db: pd.DataFrame,
-    logger,
-    show_debug_plots: bool = True,
-    save_debug_plots: bool = False,
-    save_file_path: Path | None = None,
-) -> None:
-    """Show one debug subplot per label dataframe."""
-    plot_groups = [
-        ("step_id", step_id_db, "score"),
-        ("step_id_plateau", step_id_plateau_db, "score"),
-        ("status_id", status_id_db, "score"),
-        ("status_id_plateau", status_id_plateau_db, "score"),
-        ("task_progress", task_progress_db, "progress"),
-    ]
-    plot_groups = [
-        (group_name, label_matrix, ylabel)
-        for group_name, label_matrix, ylabel in plot_groups
-        if not label_matrix.empty
-    ]
-    if not plot_groups:
-        if logger:
-            logger.info("Skipped label debug plot preview for %s because no label columns were available", extract_user_id)
-        return
 
-    panel_count = len(plot_groups)
-    fig_height = max(3.4 * panel_count, 10.0)
-    fig, axes = plt.subplots(panel_count, 1, figsize=(16, fig_height), sharex=True)
-    if panel_count == 1:
-        axes = [axes]
-    else:
-        axes = list(axes)
-
-    fig.suptitle(f"Label Debug: {extract_user_id}", fontsize=12, fontweight="bold")
-    color_map = _build_plot_color_map(plot_groups)
-
-    for ax, (group_name, label_matrix, ylabel) in zip(axes, plot_groups):
-        _plot_matrix_panel(
-            ax,
-            label_matrix.index.to_numpy(),
-            label_matrix,
-            group_name,
-            ylabel,
-            color_map,
-        )
-
-    axes[-1].set_xlabel("frame")
-
-    fig.tight_layout()
-    if show_debug_plots:
-        plt.show()
-    if save_debug_plots and save_file_path is not None:
-        save_file_path.parent.mkdir(parents=True, exist_ok=True)
-        plt.savefig(save_file_path)
-    plt.close(fig)
-
-    if logger:
-        logger.info("Displayed label debug plot preview for %s", extract_user_id)
-
-
-def _plot_matrix_panel(
-    ax,
-    frame_values,
-    label_matrix: pd.DataFrame,
-    title: str,
-    ylabel: str,
-    color_map: dict[object, object],
-) -> None:
-    """Plot all columns from one label dataframe in a shared panel."""
-    for column_name in label_matrix.columns:
-        ax.plot(
-            frame_values,
-            label_matrix[column_name].to_numpy(),
-            linewidth=1.1,
-            alpha=0.9,
-            color=color_map[column_name],
-            label=_format_annotation_label(column_name),
-        )
-
-    ax.set_title(title, fontsize=10)
-    ax.set_ylabel(ylabel)
-    ax.grid(True, alpha=0.25)
-    legend_labels = [_format_annotation_label(column_name) for column_name in label_matrix.columns]
-    if len(legend_labels) <= 12:
-        ax.legend(loc="upper right", ncol=min(4, len(legend_labels)))
-
-
-def _build_plot_color_map(
-    plot_groups: list[tuple[str, pd.DataFrame, str]],
-) -> dict[object, object]:
-    """Assign one stable color to each column index across all plot panels."""
-    ordered_columns: list[object] = []
-    seen_columns: set[object] = set()
-
-    for _, label_matrix, _ in plot_groups:
-        for column_name in label_matrix.columns:
-            if column_name in seen_columns:
-                continue
-            seen_columns.add(column_name)
-            ordered_columns.append(column_name)
-
-    colour_map = plt.get_cmap("tab20", max(len(ordered_columns), 1))
-    return {
-        column_name: colour_map(index)
-        for index, column_name in enumerate(ordered_columns)
-    }
-
-
-def _format_annotation_label(column_name: object) -> str:
-    """Return the semantic annotation label for a plotted column when known."""
-    if isinstance(column_name, int):
-        column_index = column_name
-    elif isinstance(column_name, str):
-        try:
-            column_index = int(column_name)
-        except ValueError:
-            return column_name
-    else:
-        return str(column_name)
-
-    return ANNOTATION_LABEL_BY_ID.get(column_index, str(column_name))
 
 
 def _save_features(features: dict, file_path: Path, logger) -> None:

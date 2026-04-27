@@ -44,9 +44,6 @@ def main():
     logger.info("Found %s %s file(s) under %s", len(source_files), INPUT_MODE, source_root)
 
     for index, source_file in enumerate(source_files, start=1):
-        # if FILE_NAME_FILTER and FILE_NAME_FILTER not in source_file.name:
-        #     continue
-
         # path setup for output files, preserving relative structure and changing extension
         rel_path = source_file.relative_to(source_root)
         modified_rel_path = file_io_utils.modify_file_name(rel_path, prefix=f"skeleton_video")
