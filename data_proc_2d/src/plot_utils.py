@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+from dataclasses import dataclass
 
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -53,6 +54,22 @@ PLOT_RATIO_NAMES: list[str] = [name for name, *_ in RATIO_BETWEEN_DISTS]
 _DEFAULT_YSCALES = DEFAULT_YSCALES
 
 
+@dataclass
+class PanelData:
+    df: pd.DataFrame
+    names: list[str]
+    cols: list[str]
+    ylabel: str
+    title: str
+    yscale: str = "linear"
+
+
+@dataclass
+class VideoFeaturePanels:
+    video_name: str
+    feature_panel: PanelData
+    annotations: dict[str, list[dict]] | None = None
+
 def _infer_total_frames(*dfs: pd.DataFrame | None) -> int:
     max_frame = -1
     for df in dfs:
@@ -67,8 +84,23 @@ def _frame_axis_range(total_frames: int) -> tuple[int, int]:
     return 0, max(total_frames, 1)
 
 
+def _infer_total_frames_from_panel_data(
+    panel_data: list[PanelData],
+) -> int:
+    total_frames = 0
+    for panel in panel_data:
+        df = panel.df
+        if df is None or df.empty:
+            continue
+        if "frame" in df.columns:
+            total_frames = max(total_frames, int(df["frame"].max()) + 1)
+        else:
+            total_frames = max(total_frames, len(df.index))
+    return total_frames
+
+
 def _build_step_segments(
-    step_labels: list[dict] | None,
+    step_labels: dict[str, list[dict]] | None,
     total_frames: int,
 ) -> list[dict[str, int]]:
     """Convert discrete step markers into frame-span segments for plotting."""
@@ -76,7 +108,7 @@ def _build_step_segments(
         return []
 
     markers: list[dict[str, int]] = []
-    for label in step_labels:
+    for label in step_labels.get("step_markers", []):
         frame = label.get("frame")
         step_id = label.get("step_id")
         if frame is None or step_id is None:
@@ -110,14 +142,14 @@ def _build_step_segments(
 
 
 def _normalise_segment_labels(
-    labels: list[dict] | None,
+    labels: dict[str, list[dict]] | None,
     total_frames: int,
 ) -> list[dict[str, int]]:
     if not labels or total_frames <= 0:
         return []
 
     segments: list[dict[str, int]] = []
-    for label in labels:
+    for label in labels.get("step_markers", []):
         step_id = label.get("step_id")
         start_frame = label.get("start_frame", label.get("frame"))
         end_frame = label.get("end_frame")
@@ -175,6 +207,177 @@ def _plot_segment_panel(
     ax.set_yticks(step_ids)
     ax.grid(axis="x", linestyle=":", alpha=0.4)
     ax.tick_params(labelsize=7)
+
+
+def _plot_annotation_panel(
+    ax,
+    annotations: dict[str, list[dict]] | None,
+    video_name: str,
+    total_frames: int,
+) -> None:
+    annotations = annotations or {}
+    elan_segments = _normalise_segment_labels(
+        annotations.get("elan_step_labels", {}),
+        total_frames,
+    )
+    if elan_segments:
+        _plot_segment_panel(ax, elan_segments, f"Annotations: {video_name} (ELAN)", STEP_ID_LABEL)
+        return
+
+    step_segments = _build_step_segments(
+        annotations.get("step_labels", {}),
+        total_frames,
+    )
+    if step_segments:
+        _plot_segment_panel(ax, step_segments, f"Annotations: {video_name} (Step Labels)", STEP_ID_LABEL)
+        return
+
+    ax.set_title(f"Annotations: {video_name} (empty)", fontsize=9)
+    ax.set_ylabel("Step ID", fontsize=8)
+    ax.set_yticks([])
+    ax.grid(axis="x", linestyle=":", alpha=0.4)
+    ax.tick_params(labelsize=7)
+
+
+def _plot_feature(ax, panel, x_axis_min, x_axis_max) -> None:
+    
+    df = panel.df
+    if df is None or df.empty:
+        ax.set_ylabel(panel.ylabel, fontsize=8)
+        ax.set_title(f"{panel.title} (empty)", fontsize=9)
+        ax.set_xlim(x_axis_min, x_axis_max)
+        ax.tick_params(labelsize=7)
+        return
+
+    frame_values = df["frame"] if "frame" in df.columns else df.index
+    valid_pairs = [(name, col) for name, col in zip(panel.names, panel.cols) if col in df.columns]
+    for name, col in valid_pairs:
+        ax.plot(frame_values, df[col], linewidth=0.8, label=name)
+    # log scale requires strictly positive values; fall back to linear if any zeros present
+    if panel.yscale == "log":
+        valid_cols = [col for _, col in valid_pairs]
+        data_vals = df[valid_cols].values if valid_cols else None
+        if data_vals is not None and (data_vals <= 0).any():
+            panel.yscale = "symlog"
+    ax.set_yscale(panel.yscale)
+    ax.set_ylabel(panel.ylabel, fontsize=8)
+    ax.set_title(panel.title, fontsize=9)
+    ax.set_xlim(x_axis_min, x_axis_max)
+    ax.tick_params(labelsize=7)
+    if valid_pairs:
+        ax.legend(fontsize=6, ncol=3, loc="upper right")
+
+
+
+def plot_features(
+    panel_data: list[PanelData],
+    annotations,
+    save_path: str | None = None,
+    suptitle: str = "",
+    show: bool = False,
+) -> None:
+    
+    total_frames = _infer_total_frames_from_panel_data(panel_data)
+    x_axis_min, x_axis_max = _frame_axis_range(total_frames)
+    step_segments = _build_step_segments(annotations.get('step_labels', {}), total_frames)
+    elan_step_segments = _normalise_segment_labels(annotations.get('elan_step_labels', {}), total_frames)
+
+    height_ratios = [5.0] * len(panel_data)
+    if step_segments:
+        height_ratios.append(1.0)
+    if elan_step_segments:
+        height_ratios.append(1.0)
+
+    panel_count = len(height_ratios)
+    fig_height = 1.1 * sum(height_ratios)
+    fig, axes = plt.subplots(
+        panel_count,
+        1,
+        figsize=(16, fig_height),
+        sharex=False,
+        gridspec_kw={"height_ratios": height_ratios},
+    )
+    if panel_count == 1:
+        axes = [axes]
+    else:
+        axes = list(axes)
+    if suptitle:
+        fig.suptitle(suptitle, fontsize=11, fontweight="bold", y=1.002)
+
+    for ax, panel in zip(axes[:len(panel_data)], panel_data):
+        _plot_feature(ax, panel, x_axis_min, x_axis_max)
+        
+    next_panel_index = len(panel_data)
+    if step_segments:
+        _plot_segment_panel(axes[next_panel_index], step_segments, "Step Labels", STEP_ID_LABEL)
+        axes[next_panel_index].set_xlim(x_axis_min, x_axis_max)
+        next_panel_index += 1
+    if elan_step_segments:
+        _plot_segment_panel(axes[next_panel_index], elan_step_segments, "ELAN Step Labels", STEP_ID_LABEL)
+        axes[next_panel_index].set_xlim(x_axis_min, x_axis_max)
+
+    axes[-1].set_xlabel("Frame", fontsize=8)
+    fig.tight_layout()
+    if save_path:
+        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    if show:
+        plt.show()
+    plt.close(fig)
+
+
+def plot_features_by_video(
+    video_panels: list[VideoFeaturePanels],
+    save_path: str | None = None,
+    suptitle: str = "",
+    show: bool = False,
+) -> None:
+    """Render alternating feature and annotation panels for each video."""
+    if not video_panels:
+        return
+
+    height_ratios: list[float] = []
+    for _ in video_panels:
+        height_ratios.extend([5.0, 1.2])
+
+    panel_count = len(height_ratios)
+    fig_height = 1.1 * sum(height_ratios)
+    fig, axes = plt.subplots(
+        panel_count,
+        1,
+        figsize=(16, fig_height),
+        sharex=False,
+        gridspec_kw={"height_ratios": height_ratios},
+    )
+    axes = [axes] if panel_count == 1 else list(axes)
+
+    if suptitle:
+        fig.suptitle(suptitle, fontsize=11, fontweight="bold", y=1.002)
+
+    for index, video_panel in enumerate(video_panels):
+        feature_ax = axes[index * 2]
+        annotation_ax = axes[index * 2 + 1]
+        total_frames = _infer_total_frames_from_panel_data([video_panel.feature_panel])
+        x_axis_min, x_axis_max = _frame_axis_range(total_frames)
+
+        _plot_feature(feature_ax, video_panel.feature_panel, x_axis_min, x_axis_max)
+        feature_ax.set_title(video_panel.feature_panel.title, fontsize=9)
+
+        _plot_annotation_panel(
+            annotation_ax,
+            video_panel.annotations,
+            video_panel.video_name,
+            total_frames,
+        )
+        annotation_ax.set_xlim(x_axis_min, x_axis_max)
+        annotation_ax.set_xlabel("Frame", fontsize=8)
+
+    fig.tight_layout()
+    if save_path:
+        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    if show:
+        plt.show()
+    plt.close(fig)
+
 
 
 def plot_pose_analysis(

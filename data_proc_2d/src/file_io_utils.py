@@ -6,31 +6,14 @@ import sys
 from typing import Any
 import re
 
+from altair import value
 import pandas as pd
 
-sys.path.append(str(Path(__file__).resolve().parents[2]))
+UTILITY_MODULE_ROOT = Path(__file__).resolve().parents[2]
+if str(UTILITY_MODULE_ROOT) not in sys.path:
+    sys.path.insert(0, str(UTILITY_MODULE_ROOT))
 from utilities import file_io
 
-
-if __name__ == "__main__":
-    os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
-
-
-def _import_torch():
-    """Import torch lazily to avoid hard crashes during module import."""
-    try:
-        import torch  # type: ignore
-
-        return torch
-    except OSError as exc:
-        raise RuntimeError(
-            "PyTorch could not load native DLLs. This usually means an incompatible "
-            "Python/PyTorch build on Windows. Use Python 3.10-3.12 and reinstall torch."
-        ) from exc
-    except ImportError as exc:
-        raise RuntimeError(
-            "PyTorch is not installed in the active environment. Install torch and retry."
-        ) from exc
 
 
 # pytorch's torch.save and torch.load functions with logging
@@ -49,11 +32,29 @@ def load_torch(path: str, logger: logging.Logger | None = None, map_location: An
         logger.info("Loaded torch object from %s", path)
     return data
 
+# helper function 
+def _import_torch():
+    """Import torch lazily to avoid hard crashes during module import."""
+    try:
+        import torch  # type: ignore
+
+        return torch
+    except OSError as exc:
+        raise RuntimeError(
+            "PyTorch could not load native DLLs. This usually means an incompatible "
+            "Python/PyTorch build on Windows. Use Python 3.10-3.12 and reinstall torch."
+        ) from exc
+    except ImportError as exc:
+        raise RuntimeError(
+            "PyTorch is not installed in the active environment. Install torch and retry."
+        ) from exc
+
+
 
 def load_step_ids_from_json(
     path: Path,
     logger: logging.Logger | None = None,
-) -> tuple[list[dict[str, int | float]], str | None]:
+) -> tuple[dict[str, Any], str | None]:
     """Load step markers plus the referenced video path from a JSON label file."""
     try:
         data = file_io.load_json(str(path), logger=logger)
@@ -70,21 +71,30 @@ def load_step_ids_from_json(
                 logger.info("Loaded step marker: step_id=%s, timestamp=%s", step_id, timestamp)
 
             frame = timestamp * fps
-            raw = {"step_id": step_id, "timestamp": timestamp, "frame": frame}
+            raw = {"step_id": int(step_id), "timestamp": timestamp, "start_frame": int(frame)}
             label_info.append(raw)
+        
+        label_dict = {"video_path": video_file_path, "fps": fps, "step_markers": label_info}
+        # for index, marker in enumerate(label_info[1:]):
+        #     if logger:
+        #         logger.info("Step %d: step_id=%s, timestamp=%.3f sec, start_frame=%.1f", index, marker['step_id'], marker['timestamp'], marker['start_frame'])
 
-        return label_info, video_file_name
+        #     label_info[len(label_info) - 1 - index]['end_frame'] = int(round(marker['start_frame']))
+            
+            
+            
+        return label_dict, video_file_name
 
     except Exception as e:
         if logger:
             logger.error("Failed to load step IDs from JSON at %s: %s", path, e)
-        return [], None
+        return {}, None
 
 
-def load_elan_label_data(file_path: Path, config: dict, logger: logging.Logger | None = None) -> tuple[dict | None, str | None]:
+def load_elan_label_data(file_path: Path, config: dict, logger: logging.Logger | None = None) -> tuple[list[dict[str, Any]] | None, str | None, dict | None]:
     """Load ELAN .csv label data from *file_path*.
 
-    Returns the parsed data as a dictionary, or ``None`` on any failure.
+    Returns the parsed data as a list of dictionaries, the video file name, and metadata, or ``None`` on any failure.
     """
 
     with open(file_path, "r", encoding="utf-8") as file:
@@ -109,17 +119,21 @@ def load_elan_label_data(file_path: Path, config: dict, logger: logging.Logger |
     
     for index, row in df.iterrows():
         for label in config.keys():
-            try:
-                if int(row[label]) == 1:
-                    if logger:
-                        logger.info("Found label '%s' at row %d (timestamp: %s)", label, index, row._2)
-                df.loc[index, 'step_id'] = config[label]
-                break
-            except ValueError:
+            piece_id = row.get(label, 0)
+            if pd.isna(piece_id):
                 if logger:
                     logger.warning("Invalid value for label '%s' at row %d: %s", label, index, row[label])
-
-    columns = ["step_id", "Begin Time - ss.msec", "Begin Time - Frame", "End Time - Frame"]
+                continue
+            if logger:
+                logger.info("Found label '%s' at row %d (timestamp: %s)", label, index, row["Begin Time - ss.msec"])
+            df.loc[index, 'step_id'] = config[label]
+            df.loc[index, 'piece_id'] = piece_id
+            break
+    
+    
+    
+    
+    columns = ["step_id", "piece_id", "Begin Time - ss.msec", "Begin Time - Frame", "End Time - Frame"]
     renamed_columns = {
         "Begin Time - ss.msec": "timestamp",
         "Begin Time - Frame": "start_frame",
@@ -127,10 +141,47 @@ def load_elan_label_data(file_path: Path, config: dict, logger: logging.Logger |
     }
     df_output = df[columns].copy()
     df_output.rename(columns=renamed_columns, inplace=True)
-    df_output['step_id'] = df_output['step_id'].astype(int)
+    try:
+        df_output['step_id'] = df_output['step_id'].astype(int)
+        df_output['piece_id'] = df_output['piece_id'].astype(int)
+    except ValueError as e:
+        if logger:
+            logger.error("Failed to convert 'step_id' or 'piece_id' to integer: %s", e)
+        return None, None, None
+
+    df_output = _assign_group_progress_ranges(df_output)
+
     output_dict = df_output.to_dict(orient="records")
 
-    return output_dict, video_file_name
+    return output_dict, video_file_name, meta_data
+
+
+def _assign_group_progress_ranges(df: pd.DataFrame) -> pd.DataFrame:
+    """Add evenly distributed progress ranges for each (step_id, piece_id) group."""
+    if df.empty:
+        return df.copy()
+
+    result = df.copy()
+    result["start_progress"] = 0
+    result["end_progress"] = 100
+
+    for _, group in result.groupby(["step_id", "piece_id"], sort=False):
+        ordered_group = group.sort_values(
+            by=["start_frame", "end_frame", "timestamp"],
+            kind="stable",
+        )
+        group_size = len(ordered_group)
+        previous_end = -1
+
+        for position, index in enumerate(ordered_group.index):
+            end_progress = 100 if position == group_size - 1 else int(((position + 1) * 100) // group_size)
+            start_progress = 0 if position == 0 else previous_end + 1
+
+            result.at[index, "start_progress"] = start_progress
+            result.at[index, "end_progress"] = end_progress
+            previous_end = end_progress
+
+    return result
 
 
 def _time_to_frame(df, column: str, ms_per_sample: float) -> int | None:
@@ -179,9 +230,32 @@ def modify_file_name(rel_path: Path, prefix: str = "features") -> Path:
     return rel_path.with_name(new_stem + rel_path.suffix)
 
 
+def iter_files(root: Path, extension: str = ".pt"):
+    """Yield all files with the given extension recursively under *root*."""
+    for file in sorted(root.rglob(f"*{extension}")):
+        yield file
+
+
+def iter_video_files(root: Path, suffixes: set = {".mp4", ".avi", ".mov", ".mkv", ".m4v"}):
+    
+    if isinstance(root, list):
+        for path in root:
+            yield from iter_video_files(path, suffixes)
+    else:
+        for file_path in root.rglob("*"):
+            if file_path.is_file() and file_path.suffix.lower() in suffixes:
+                if "human_skeletons" in file_path.parts:
+                    continue
+                yield file_path
+
+
+
+
 if __name__ == "__main__":
+    
+    os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
     root_path = Path(r"G:\My Drive\University of Stuttgart\ITECH_Thesis\ELAN")
     file_path = root_path / "cam1_B1.csv"
-    output_dict, video_file_name = load_elan_label_data(file_path)
+    output_dict, video_file_name, meta_data = load_elan_label_data(file_path, {})
     print(json.dumps(output_dict, indent=2, ensure_ascii=False))
     print("Referenced video file:", video_file_name)
