@@ -17,7 +17,7 @@ def main():
 
     # file path setup
     video_root_path = Path(r"G:\.shortcut-targets-by-id\1Ykdzx6UjCe0KPKy_6M4LgCOTxKK6Awgy\Videos")
-    input_video_path = video_root_path / "cropped" / "cam-02"
+    input_video_path = video_root_path / "raw" / "cam-04"
     output_root_path = Path(__file__).resolve().parents[1] / "dataset" / "train" / "raw"
     output_root_path.mkdir(parents=True, exist_ok=True)
 

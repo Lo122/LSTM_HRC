@@ -10,9 +10,11 @@ import torch
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using device: {device}")
 
-json_dir = r"data\video_labels"
-pt_dir = r"data\dataset"
-
+json_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset\annotations\all"
+pt_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset\train\raw"
+pt_test_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset\test\raw"
+pt_val_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset\val\raw"
+pt_test_norm_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset\train\norm"
 # ============================================================
 # Config
 # ============================================================
@@ -122,29 +124,40 @@ def compute_urgency_and_type(
 # ============================================================
 
 # normalize features
+
+        # velocity_xy = data['velocity_xy']          # [T, 17]
+        # acceleration_xy = data['acceleration_xy']  # [T, 17]
+
+        # pol_vectors = data['pol_vectors']          # [T, 17]
+        # angles = data['pol_angles']                    # [T, 17]
+
+        # joint_angles = data['joint_angles']                   
+        # ratios = data['ratios']                    # [T, 1] 
+        # dist_ratios = data['dist_ratios']            # [T, 1]
+
 def load_feature_from_pt(pt_path: str, mean_std) -> np.ndarray:
     data = torch.load(pt_path, weights_only=False)
 
-    xyn_feat = data['landmarks']
+    velocity_xy = data['velocity_xy']          # [T, 17]
+    acceleration_xy = data['acceleration_xy']  # [T, 17]
 
-    degree_feat = data['feat_degree']
-    ratio_feat = data['feat_ratio']
-    speed_feat = data['feat_speed']
-    acc_feat = data['feat_acc']
+    pol_vectors = data['pol_vectors']          # [T, 17]
+    angles = data['pol_angles']                    # [T, 17]
 
-    angle_rad = torch.deg2rad(degree_feat)
-    sin_feat = torch.sin(angle_rad)
-    cos_feat = torch.cos(angle_rad)
+    joint_angles = data['joint_angles']                   
+    ratios = data['ratios']                    # [T, 1] 
+    dist_ratios = data['dist_ratios']            # [T, 1]
 
-    angle_feat = torch.cat([sin_feat, cos_feat], dim=1)
+    #norm them with stored global std/mean
+    feat_vel_xy = (velocity_xy - mean_std[0])/mean_std[1]
+    feat_acc_xy = (acceleration_xy - mean_std[2])/mean_std[3]
+    feat_pool_vectors = (pol_vectors - mean_std[4])/mean_std[5]
+    feat_angles = (angles - mean_std[6])/mean_std[7]
+    feat_joint_angles = (joint_angles - mean_std[8])/mean_std[9]
+    feat_ratios = (ratios - mean_std[10])/mean_std[11]
+    feat_dist_ratios = (dist_ratios - mean_std[12])/mean_std[13]
 
-    degree_feat = (angle_feat - mean_std[0]) / mean_std[1]
-    ratio_feat = (ratio_feat - mean_std[2]) / mean_std[3]
-    speed_feat = (speed_feat - mean_std[4]) / mean_std[5]
-    acc_feat = (acc_feat - mean_std[6]) / mean_std[7]
-
-    return [degree_feat.numpy(), ratio_feat.numpy(), speed_feat.numpy(), acc_feat.numpy()],xyn_feat.numpy()
-
+    return [feat_vel_xy,feat_acc_xy,feat_pool_vectors,feat_angles,feat_joint_angles,feat_ratios,feat_dist_ratios]
 
 
 def generate_step_soft_labels(
@@ -203,12 +216,14 @@ def build_dataset(
     mean_std: Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
 ):
     # 1) load data
-    feat_list, xyn_feat = load_feature_from_pt(pt_path, mean_std)  # [T, pose_dim]
+    # feat_list, xyn_feat = load_feature_from_pt(pt_path, mean_std)  # [T, pose_dim]
+    feat_res = load_feature_from_pt(pt_path, mean_std)
+
     labels = load_json(labels_json_path)
 
     step_markers = labels.get("step_markers", [])
 
-    num_frames = feat_list[0].shape[0]
+    num_frames = feat_res[0].shape[0]
 
     step_soft = generate_step_soft_labels(
     step_markers=step_markers,
@@ -217,65 +232,41 @@ def build_dataset(
     sigma_sec=2.0
     )
 
-    #normalized features
-    X_degree = []
-    X_ratio = []
-    X_speed = []
-    X_acc = []
+    #stack all
+    (
+        X_vel_xy,
+        X_acc_xy,
+        X_pool_vec,
+        X_angles,
+        X_joint_angles,
+        X_ratios,
+        X_dist_ratios,
+    ) = feat_res
 
-    X_xyn = []  # add raw keypoints as features for visualization and potential future use
+    X_step = step_soft
 
-    X_step = []
+    def stack_float32(x):
+        return np.stack(x, axis=0).astype(np.float32)
 
-    for frame_idx in range(num_frames):
+    to_stack = {
+        "X_vel_xy": X_vel_xy,
+        "X_acc_xy": X_acc_xy,
+        "X_pool_vec": X_pool_vec,
+        "X_angles": X_angles,
+        "X_joint_angles": X_joint_angles,
+        "X_ratios": X_ratios,
+        "X_dist_ratios": X_dist_ratios,
+        "X_step": X_step,
+    }
 
-        t_sec = frame_idx / cfg.fps
+    stacked = {
+        k: stack_float32(v) if isinstance(v, list) else np.asarray(v, dtype=np.float32)
+        for k, v in to_stack.items()
+    }
 
-        # feature per frame
-        x_deg = feat_list[0][frame_idx]  # [pose_dim]
-        x_ratio = feat_list[1][frame_idx]  # [pose_dim]
-        x_speed = feat_list[2][frame_idx]  # [pose_dim]
-        x_acc = feat_list[3][frame_idx]  # [pose_dim]
-        x_xyn = xyn_feat[frame_idx]  # [2]
-
-        X_xyn.append(x_xyn)
-
-        X_degree.append(x_deg)
-        X_ratio.append(x_ratio)
-        X_speed.append(x_speed)
-        X_acc.append(x_acc)
-        X_step.append(step_soft[frame_idx])
-
-    # -----------------------------
-    # pack arrays
-    # -----------------------------
-    X_degree = np.stack(X_degree, axis=0).astype(np.float32)  # [T, pose_dim]
-    X_ratio = np.stack(X_ratio, axis=0).astype(np.float32)   # [T, pose_dim]
-    X_speed = np.stack(X_speed, axis=0).astype(np.float32)    # [T, pose_dim]
-    X_acc = np.stack(X_acc, axis=0).astype(np.float32)        # [T, pose_dim]
-
-    X_xyn = np.stack(X_xyn, axis=0).astype(np.float32)        # [T, 2]
-
-    X_step = np.stack(X_step, axis=0).astype(np.float32)      # [T]
-
-
-    np.savez(
-        cfg.out_path,
-
-        X_degree=X_degree,      # [T, pose_dim]
-        
-        X_ratio=X_ratio,
-        X_speed=X_speed,
-        X_acc=X_acc,
-
-        X_xyn=X_xyn,          # raw keypoints for potential future use
-
-        X_step=X_step,
-        pose_dim=X_degree.shape[1],
-
-    )
-
-
+    # save
+    np.savez(cfg.out_path, **stacked)
+    
 #region - not used for now
 # CSV for visualization
     # with open(cfg.out_path.replace(".npz", ".csv"), "w", newline='') as f:
@@ -299,13 +290,6 @@ def build_dataset(
     print("Frame-level dataset built successfully!")
     print("==============================")
     print(f"Saved: {cfg.out_path}")
-    print(f"Frames: {len(X_degree)}")
-    print(f"X_degree: {X_degree.shape}")
-    print(f"X_ratio: {X_ratio.shape}")
-    print(f"X_speed: {X_speed.shape}")
-    print(f"X_acc: {X_acc.shape}")
-    print(f"X_xyn: {X_xyn.shape}")
-    print(f"X_step: {X_step.shape}")
 
     print("==============================\n")
 
@@ -314,71 +298,116 @@ import numpy as np
 from tqdm import tqdm
 
 def compute_global_norm_stats(pt_files):
-
-    # all_landmark = [] 
-    all_degrees = []
-    all_ratios = []
-    all_speed = []
-    all_accel = []
-
+    feats = {
+        "vel_xy": [],
+        "acc_xy": [],
+        "pol_vec": [],
+        "pol_ang": [],
+        "joint_ang": [],
+        "ratios": [],
+        "dist_ratios": [],
+    }
 
     for pt_path in pt_files:
         pt_path = os.path.join(pt_dir, pt_path)
         data = torch.load(pt_path, weights_only=False)
 
-        landmark_feat = data['landmarks']       # [T, 17, 2]
-        degree_feat = data['feat_degree']       # [T, 8]
-        ratio_feat = data['feat_ratio']         # [T, 1]
-        speed_feat = data['feat_speed']          # [T, 17]
-        acc_feat = data['feat_acc']  # [T, 17]
+        feats["vel_xy"].append(data["velocity_xy"].numpy())
+        feats["acc_xy"].append(data["acceleration_xy"].numpy())
+        feats["pol_vec"].append(data["pol_vectors"].numpy())
+        feats["pol_ang"].append(data["pol_angles"].numpy())
+        feats["joint_ang"].append(data["joint_angles"].numpy())
+        feats["ratios"].append(data["ratios"].numpy())
+        feats["dist_ratios"].append(data["dist_ratios"].numpy())
 
-        angle_rad = torch.deg2rad(degree_feat)
-        sin_feat = torch.sin(angle_rad)
-        cos_feat = torch.cos(angle_rad)
+        #nan check:
+        np_check = data["dist_ratios"].numpy()
+        nan_mask = np.isnan(np_check)
+        if nan_mask.sum() != 0: 
+            idx = np.argwhere(nan_mask)
+            print("First few NaN positions:", idx[:10])
 
-        angle_feat = torch.cat([sin_feat, cos_feat], dim=1)  # [T, 18]
+            print(f"problematic pt: {pt_path}")
 
-        # pose_feat = torch.cat([angle_feat, acceleration], dim=1)  # [T, F]
+    stats = {}
 
-        all_degrees.append(angle_feat.numpy())
-        all_ratios.append(ratio_feat.numpy())
-        all_speed.append(speed_feat.numpy())
-        all_accel.append(acc_feat.numpy())
+    for k, v in feats.items():
+        v = np.concatenate(v, axis=0)
 
-    # all_feats = np.concatenate(all_feats, axis=0)  # [N, F]
-    all_degrees = np.concatenate(all_degrees, axis=0)  # [N, 18]
-    all_ratios = np.concatenate(all_ratios, axis=0)    # [N, 1]
-    all_speed = np.concatenate(all_speed, axis=0)      # [N, 17]
-    all_accel = np.concatenate(all_accel, axis=0)      # [N, 17]
+        stats[f"{k}_mean"] = v.mean(axis=0).astype(np.float32)
+        stats[f"{k}_std"] = (v.std(axis=0) + 1e-6).astype(np.float32)
 
-    # mean = all_feats.mean(axis=0)
-    # std = all_feats.std(axis=0) + 1e-6
-    mean_degree = all_degrees.mean(axis=0)
-    std_degree = all_degrees.std(axis=0) + 1e-6
-    mean_ratio = all_ratios.mean(axis=0)
-    std_ratio = all_ratios.std(axis=0) + 1e-6
-    mean_speed = all_speed.mean(axis=0)
-    std_speed = all_speed.std(axis=0) + 1e-6
-    mean_accel = all_accel.mean(axis=0)
-    std_accel = all_accel.std(axis=0) + 1e-6
 
-    return [mean_degree.astype(np.float32), std_degree.astype(np.float32), mean_ratio.astype(np.float32), std_ratio.astype(np.float32), mean_speed.astype(np.float32), std_speed.astype(np.float32), mean_accel.astype(np.float32), std_accel.astype(np.float32)]
+
+
+    ordered_keys = [
+        "vel_xy",
+        "acc_xy",
+        "pol_vec",
+        "pol_ang",
+        "joint_ang",
+        "ratios",
+        "dist_ratios",
+    ]
+
+    out_list = []
+    for k in ordered_keys:
+        mean = stats[f"{k}_mean"]
+        std = stats[f"{k}_std"]
+        out_list.extend([mean, std])
+
+    return out_list
+
+
+def split_raw_pt_files(pt_dir, pt_test_dir, test_ratio=0.2, seed=42):
+    pt_files = sorted([f for f in os.listdir(pt_dir) if f.endswith(".pt")])
+
+    if len(os.listdir(pt_test_dir)) <= 1:
+        rng = np.random.default_rng(seed)
+        rng.shuffle(pt_files)
+
+        split_idx = int(len(pt_files) * test_ratio)
+        test_files = pt_files[:split_idx]
+        train_files = pt_files[split_idx:]
+
+        for f in test_files:
+            os.rename(
+                os.path.join(pt_dir, f),
+                os.path.join(pt_test_dir, f)
+            )
+
+    else:
+        train_files = sorted([f for f in os.listdir(pt_dir) if f.endswith(".pt")])
+        test_files = sorted([f for f in os.listdir(pt_test_dir) if f.endswith(".pt")])
+
+    return train_files, test_files
+
+
 
 if __name__ == "__main__":
 
+    #split train/test dataset 20/80
+    train_files, test_files = split_raw_pt_files(pt_dir, pt_test_dir, test_ratio=0.2)
 
-    pt_files = [f for f in os.listdir(pt_dir) if f.endswith(".pt")]
+    #split test/val dataset 10/10
+    test_files, val_files = split_raw_pt_files(pt_test_dir,pt_val_dir,test_ratio=0.5)
 
     #return mean and std for each feature type (degree, ratio, speed, accel) in order to normalize data when building dataset
-    res_list = compute_global_norm_stats(pt_files)
-    np.savez("norm_stats.npz", mean_degree=res_list[0], std_degree=res_list[1], mean_ratio=res_list[2], std_ratio=res_list[3], mean_speed=res_list[4], std_speed=res_list[5], mean_accel=res_list[6], std_accel=res_list[7])
+    res_list = compute_global_norm_stats(train_files)
+    np.savez("data_proc_2d/dataset/norm.npz", mean_vel_xy=res_list[0], std_vel_xy=res_list[1], mean_acc_xy=res_list[2], std_acc_xy=res_list[3], 
+             mean_pol_vec=res_list[4], std_pol_vec=res_list[5], mean_pol_ang=res_list[6], std_pol_ang=res_list[7], 
+             mean_joint_ang=res_list[8], std_joint_ang=res_list[9], mean_ratios=res_list[10], std_ratios=res_list[11], 
+             mean_dist_ratios=res_list[12], std_dist_ratios=res_list[13])
 
 
-    for pt_file in pt_files:
+    for pt_file in train_files:
         pt_path = os.path.join(pt_dir, pt_file)
-        out_path = os.path.join("data/built_dataset", os.path.basename(pt_path).replace(".pt", "_norm.npz"))
+        out_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset\train\norm"
+        
+        out_path = os.path.join(pt_test_norm_dir, os.path.basename(pt_path).replace(".pt", "_norm.npz"))
+    
 
-        json_paths = os.path.join(json_dir, os.path.basename(pt_path).replace(".pt", "_steps.json"))
+        json_paths = os.path.join(json_dir, os.path.basename(pt_path).replace("pt","json").replace("features","label"))
 
 
         cfg = Config(
