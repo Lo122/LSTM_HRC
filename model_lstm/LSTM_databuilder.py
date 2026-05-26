@@ -2,37 +2,57 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-# load data from frame-wise to sequence-wise for LSTM training
-# choose seq2one first > only needs to predict the last frame's label, which is more stable and easier to train
+
+FEATURE_KEYS = [
+    "velocity_xy",
+    "acceleration_xy",
+    "pol_vectors",
+    "pol_angles",
+    "joint_angles",
+    "ratios",
+    "dist_ratios",
+    "angles_combined",
+]
+
 
 class AssistSequenceDataset(Dataset):
     def __init__(
         self,
         npz_path,
-        window_size=120,       # how many frames as input (e.g., 4 seconds at 30fps)
-        stride=30,             # stride to slide the window (e.g., 1 second at 30fps)
-        predict_offset=0,      # predict how many frames ahead (e.g., 0 for current frame, 30 for 1 second later)
-        mode="seq2one",        # "seq2one" or "seq2seq"
-        use_type=False         # predict assist type or not
+        window_size=120,
+        stride=30,
+        predict_offset=0,
+        mode="seq2one",   # "seq2one" or "seq2seq"
+        feature_keys=None # choose features here
     ):
         super().__init__()
 
         data = np.load(npz_path)
 
-        self.deg = data["X_degree"]      # [T, pose_dim]
-        self.speed = data["X_speed"]      # [T, step_dim]
+        # ===== feature selection =====
+        if feature_keys is None:
+            feature_keys = ["angles_combined"] # the combo feature
 
-        self.step = data["X_step"]      # [T, step_dim]
-        
+        self.feature_keys = feature_keys
+
+        # load selected features
+        self.features = [data[k] for k in feature_keys]
+
+        # ===== labels =====
+        self.step = data["step_id"]            # (T,)
+        self.step_vec = data["step_id_vector"] # (T,7)
+        self.status = data["status_id"]
+        self.progress = data["task_progress"]
+
+        # ===== config =====
         self.window_size = window_size
         self.stride = stride
         self.predict_offset = predict_offset
         self.mode = mode
-        self.use_type = use_type
 
-        self.T = len(self.deg)  # total number of frames
+        self.T = self.features[0].shape[0]
 
-        # ===== construct sample index  =====
+        # ===== build indices =====
         self.indices = []
         for start in range(0, self.T - window_size - predict_offset + 1, stride):
             self.indices.append(start)
@@ -46,28 +66,25 @@ class AssistSequenceDataset(Dataset):
         end = start + self.window_size
         target_index = end - 1 + self.predict_offset
 
-        # ===== concatenate features =====
-        x_deg = self.deg[start:end]
-        x_speed = self.speed[start:end]
-        # x_elem = self.elem[start:end]
-        # x_env  = self.env[start:end]
+        # =====================================================
+        # build X (dynamic feature concat)
+        # =====================================================
+        feat_list = []
 
-        # x = np.concatenate([x_pose, x_elem, x_env], axis=1)
-        x = np.hstack([x_deg, x_speed])  # concatenate degree and speed features
-        x = x.astype(np.float32)  # ensure it's float32 for PyTorch
+        for f in self.features:
+            feat_list.append(f[start:end])  # (window, dim)
+
+        x = np.concatenate(feat_list, axis=1)  # (window, total_dim)
         x = torch.tensor(x, dtype=torch.float32)
 
-        # ===== construct label =====
+        # =====================================================
+        # build Y
+        # =====================================================
         if self.mode == "seq2one":
-
-            y_step = self.step[target_index]
-            y = torch.tensor(y_step, dtype=torch.float32)
+            y = torch.tensor(self.step[target_index], dtype=torch.long)
 
         elif self.mode == "seq2seq":
-
-
-            y_step = self.step[start:end]
-            y = torch.tensor(y_step, dtype=torch.float32)
+            y = torch.tensor(self.step[start:end], dtype=torch.long)
 
         else:
             raise ValueError("mode must be seq2one or seq2seq")
