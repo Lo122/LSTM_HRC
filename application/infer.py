@@ -122,7 +122,7 @@ def build_feature(kpts):
 # =========================
 
 # use another video for testing
-test_vid = r"G:\.shortcut-targets-by-id\1Ykdzx6UjCe0KPKy_6M4LgCOTxKK6Awgy\videos\processed\cam2\cam2_B1.mp4"
+test_vid = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\cropped\cam-01\video__cam-01_uid-01_take-03.mp4"
 cap = cv2.VideoCapture(test_vid)
 
 while True:
