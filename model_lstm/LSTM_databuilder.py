@@ -4,14 +4,18 @@ from torch.utils.data import Dataset
 
 
 FEATURE_KEYS = [
+    "velocity_scale",
+    "acceleration_scale",
     "velocity_xy",
     "acceleration_xy",
     "pol_vectors",
+    "pol_distance",
     "pol_angles",
+    "pol_distance_velocity",
+    "pol_angluer_velocity",
     "joint_angles",
     "ratios",
     "dist_ratios",
-    "angles_combined",
 ]
 
 
@@ -22,7 +26,7 @@ class AssistSequenceDataset(Dataset):
         window_size=120,
         stride=30,
         predict_offset=0,
-        mode="seq2one",   # "seq2one" or "seq2seq"
+        mode="seq2seq",   # "seq2one" or "seq2seq"
         feature_keys=None # choose features here
     ):
         super().__init__()
@@ -31,17 +35,15 @@ class AssistSequenceDataset(Dataset):
 
         # ===== feature selection =====
         if feature_keys is None:
-            feature_keys = ["angles_combined"] # the combo feature
+            feature_keys = ["ratios"] # the combo feature
 
         self.feature_keys = feature_keys
 
         # load selected features
         self.features = [data[k] for k in feature_keys]
 
-        # ===== labels =====
+        # ===== labels fixed 2 outputs =====
         self.step = data["step_id"]            # (T,)
-        self.step_vec = data["step_id_vector"] # (T,7)
-        self.status = data["status_id"]
         self.progress = data["task_progress"]
 
         # ===== config =====
@@ -81,11 +83,15 @@ class AssistSequenceDataset(Dataset):
         # build Y
         # =====================================================
         if self.mode == "seq2one":
-            y = torch.tensor(self.step[target_index], dtype=torch.long)
-
+            y = {
+                "step": torch.tensor(self.step[target_index], dtype=torch.long),
+                "progress": torch.tensor(self.progress[target_index], dtype=torch.float32),
+            }
         elif self.mode == "seq2seq":
-            y = torch.tensor(self.step[start:end], dtype=torch.long)
-
+            y = {
+                "step": torch.tensor(self.step[start:end], dtype=torch.long),
+                "progress": torch.tensor(self.progress[start:end], dtype=torch.float32),
+            }
         else:
             raise ValueError("mode must be seq2one or seq2seq")
 
