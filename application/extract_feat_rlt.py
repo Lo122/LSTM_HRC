@@ -80,16 +80,23 @@ def _update_landmark_history(smoothed_kpt: torch.Tensor) -> torch.Tensor:
 
 
 def extract_features(smoothed_kpt: torch.Tensor, selected_feats: list[str] | None = None) -> dict[str, torch.Tensor]:
-    _features = {}
     landmarks = _update_landmark_history(smoothed_kpt)  # (HISTORY_SIZE, num_joints, 2)
+    return _extract_features_from_landmarks(landmarks, selected_feats, EXCLUDE_NODES)
 
+
+def _extract_features_from_landmarks(
+    landmarks: torch.Tensor,
+    selected_feats: list[str] | None,
+    exclude_nodes: list[int],
+) -> dict[str, torch.Tensor]:
+    _features = {}
 
     # clean up NaN, inf, zero or any malicious values for tranning models in landmarks
     landmarks = feature_extraction._log_malicious_tensor(landmarks, "smoothed_kpt")
     landmarks = feature_extraction._fill_zero_frames_with_previous(landmarks, "smoothed_kpt")
     
     # velocity and acceleration (magnitude)
-    include_node_list = [i for i in range(landmarks.shape[1]) if i not in EXCLUDE_NODES]
+    include_node_list = [i for i in range(landmarks.shape[1]) if i not in exclude_nodes]
     velocity_scale, acceleration_scale, velocity_xy, acceleration_xy = feature_extraction.veclocity_acceleration_magnitude(landmarks)
     _features["velocity_scale"] = velocity_scale[:, include_node_list]
     _features["acceleration_scale"] = acceleration_scale[:, include_node_list]

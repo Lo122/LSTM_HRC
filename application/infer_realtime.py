@@ -1,3 +1,6 @@
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
 import cv2
 import torch
 import numpy as np
@@ -6,15 +9,18 @@ from collections import deque
 
 import random
 
-import os
 import sys
 import socket
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.append(ROOT)
+import time
+from enum import Enum
+from pathlib import Path
 
-from data.extract_pose import normalize_keypoints, extract_posture_features
-from LSTM.LSTM_model_train import AssistLSTM
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from model_lstm.LSTM_model_train import AssistLSTM
+
 from step_id_stabilizer import StepIdStabilizer
 from activation_logic import (
     build_current_task,
@@ -29,19 +35,56 @@ import math
 
 from copy import deepcopy
 
+from extract_feat_rlt import setup_filtering, smooth_kpt,extract_features
+from norm_feat_rlt import NormRealTime
 
 # =========================
 # CONFIG
 # =========================
 SELECTED_FEATS = ["pol_angles","joint_angles","ratios"]
-MODEL_PATH = Path(r"C:\Users\loy49\Desktop\REPO\LSTM_HRC\model_lstm\runs\exp_2026-06-28_15-27-49\best_model.pth")
-NORM_PATH = r"C:\Users\loy49\Desktop\REPO\LSTM_HRC\data_proc_2d\dataset\norm_2026-06-27.npz"
 
-# =========================
-# NEW: activation / confirmation imports
-# =========================
-import time
-from enum import Enum
+BEST_MODEL_DIR = Path(r"C:\Users\loy49\Desktop\REPO\LSTM_HRC\model_lstm\runs\exp_2026-06-28_15-27-49")
+MODEL_PATH = Path(BEST_MODEL_DIR) / "best_model.pth"
+MODEL_CONFIG_PATH = Path(BEST_MODEL_DIR) / "config.json"
+
+NORM_DIR = Path(r"C:\Users\loy49\Desktop\REPO\LSTM_HRC\data_proc_2d\dataset")
+#latest norm npz
+npz_files = list(NORM_DIR.glob("*.npz"))
+if not npz_files:
+    raise FileNotFoundError(f"No .npz files found in {NORM_DIR}")
+
+NORM_PATH = str(max(npz_files, key=lambda p: p.stat().st_mtime))
+
+
+yolo_model = YOLO("yolo26n-pose.pt")
+
+#MODEL CONFIGURATION FROM JSON
+
+with MODEL_CONFIG_PATH.open("r", encoding="utf-8") as config_file:
+    model_config = json.load(config_file)
+
+WINDOW_SIZE = model_config["window_size"]
+INPUT_DIM = model_config["input_dim"]
+HINDDEN_DIM = model_config["hidden_dim"]
+NUM_STEPS = model_config["num_steps"]
+
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+model = AssistLSTM(
+    input_dim = INPUT_DIM,
+    hidden_dim = HINDDEN_DIM,
+    num_steps = NUM_STEPS
+).to(DEVICE)
+
+model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
+
+model.eval()
+
+STEP_SMOOTHING_WINDOW = 5
+STEP_CONFIRMATION_COUNT = 3
+STEP_MIN_CONFIDENCE = 0.6
+STEP_MIN_MARGIN = 0.15
+
 
 
 class ChangedMessageSender:
@@ -60,30 +103,10 @@ class ChangedMessageSender:
     def check_be_ready(self):
         pass
 
-
-# region UDP connection
-# set up msg protocol with gh/robot through local UDP
-#
-# Original protocol:
-# msg_gh = {
-#     "step_id": "",
-#     "step_progress": 0.0
-# }
-#
-# Extended MVP protocol:
-# - step_id / step_progress still come from perception
-# - activation_state / permission_state / suggested_action / robot_command
-#   represent the proactive assistance framework state
-#
-# Important:
-# - step_progress is normalized by the model / progress estimator.
-# - step_progress controls WHEN communication / activation is triggered.
-# - step_id is mainly used by GH / robot to select the correct trajectory.
-
 #protocol fields:
 msg_gh = {
     "step_id": None,
-    "step_progress": 0.0,
+    "progress": 0.0,
 
     # NEW: framework MVP fields
     "robot_capable": False,
@@ -109,12 +132,6 @@ def send_message_to_gh(message):
 #the last checking gate
 gh_sender = ChangedMessageSender(send_message_to_gh)
 
-# endregion
-
-
-# =========================
-# NEW: Activation State Machine
-# =========================
 class ActivationState(Enum):
     MONITORING = "MONITORING"
     ASK_PERMISSION = "ASK_PERMISSION"
@@ -130,15 +147,6 @@ CONFIRMATION_TIMEOUT = 5.0
 # Store opportunities that were not confirmed within the time window.
 pending_task_pool = deque(maxlen=5)
 
-# Blocking confirmation is intentional for the MVP.
-# During the confirmation window, the model/video loop is paused so that:
-# - terminal output does not keep refreshing
-# - the worker has a clear 5s window to respond
-# - no new prediction can overwrite the current proposed task
-#
-# This is different from the long-term architecture, where perception may continue
-# in a separate thread. For the current CLI-based MVP, pausing inference is simpler
-# and easier to demonstrate.
 def timed_input(prompt, timeout=5.0):
     """
     Blocking user input with timeout.
@@ -183,78 +191,53 @@ def timed_input(prompt, timeout=5.0):
     # Windows, so the MVP path above avoids orphaned input threads.
     return input().strip().lower()
 
+# GLOBAL_ACTIVATION_CONFIG = {
+#     "progress_threshold": 0.8,
+#     "requires_confirmation": True
+# }
 
-# =========================
-# NEW: Global Activation + Step Action Mapping
-# =========================
-# The progress threshold is global because step_progress is normalized.
-# Therefore, progress does NOT need to be interpreted per step.
-#
-# step_progress controls:
-#   WHEN the system should trigger communication / permission acquisition.
-#
-# step_id controls:
-#   WHICH robot-capable action / GH trajectory should be selected.
-GLOBAL_ACTIVATION_CONFIG = {
-    "progress_threshold": 0.8,
-    "requires_confirmation": True
-}
-
-# Step/action mapping.
-# Replace the example step IDs and actions with your real climate ceiling workflow.
-#
-# robot_capable means:
-#   the robot MAY participate in this step.
-#   it does NOT mean the robot MUST execute it.
-#
-# suggested_action is mainly a semantic label for debugging / thesis demo.
-# GH / robot can still use step_id to select the correct trajectory.
 TRAJECTORY_CONFIG = {
     0: {
         "robot_capable": True,
-        "suggested_action": "assist_lifting"
+        "suggested_action": "assist_lifting",
+        "threshold": 0.4
     },
 
     1: {
         "robot_capable": False,
-        "suggested_action": "wait"
+        "suggested_action": "wait",
+        "threshold": 1
     },
 
-    # Add more robot-capable steps here if needed.
-    # 4: {
-    #     "robot_capable": True,
-    #     "suggested_action": "continue_screwing"
-    # },
-    # 5: {
-    #     "robot_capable": True,
-    #     "suggested_action": "hold_panel"
-    # },
+    2: {
+        "robot_capable": True,
+        "suggested_action": "wait",
+        "threshold": 0.3
+    },
+
+    3: {
+        "robot_capable": False,
+        "suggested_action": "wait",
+        "threshold": 1
+    },
+
+    4: {
+        "robot_capable": True,
+        "suggested_action": "continue_screwing",
+        "threshold": 0.7
+    },
+    5: {
+        "robot_capable": True,
+        "suggested_action": "hold_panel",
+        "threshold": 0.4
+    },
 }
 
-
-def get_step_progress(stable_step_id, probs_np=None):
-    """
-    Placeholder progress estimation.
-
-    Current code used a constant 0.5.
-
-    In your final system, this should be replaced by your normalized progress
-    output from the model / progress estimator.
-
-    Expected range:
-        0.0 = current step just started
-        1.0 = current step completed
-
-    Because progress is normalized, the same global threshold can be used
-    across different step IDs.
-    """
-    prog = random.uniform(0.7, 1)
-    return prog
 
 
 def build_msg(
     stable_step_id,
-    step_progress,
+    progress,
     robot_capable=False,
     opportunity_detected=False,
     activation_state_value="MONITORING",
@@ -269,7 +252,7 @@ def build_msg(
     """
     return {
         "step_id": int(stable_step_id) if stable_step_id is not None else None,
-        "step_progress": float(step_progress),
+        "progress": float(progress),
 
         "robot_capable": bool(robot_capable),
         "opportunity_detected": bool(opportunity_detected),
@@ -283,42 +266,6 @@ def build_msg(
 
 
 
-
-WINDOW_SIZE = 120
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-
-STEP_SMOOTHING_WINDOW = 5
-STEP_CONFIRMATION_COUNT = 3
-STEP_MIN_CONFIDENCE = 0.6
-STEP_MIN_MARGIN = 0.15
-
-# =========================
-# LOAD MODEL
-# =========================
-
-# Hybrid (Deg+Sp):   (61104, 33)
-model = AssistLSTM(input_dim=33)
-model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
-model.to(DEVICE)
-model.eval()
-
-# =========================
-# LOAD NORMALIZATION
-# =========================
-norm = np.load(NORM_PATH)
-# mean = norm["mean"]
-# std = norm["std"]
-
-mean_degree = norm["mean_degree"]
-std_degree = norm["std_degree"]
-mean_speed = norm["mean_speed"]
-std_speed = norm["std_speed"]
-
-# =========================
-# YOLO
-# =========================
-yolo_model = YOLO("yolo26n-pose.pt")
-
 # =========================
 # BUFFER
 # =========================
@@ -330,54 +277,6 @@ buffer = deque(maxlen=WINDOW_SIZE)
 prev_kpts = None
 prev_speed = None
 step_stabilizer = None
-
-
-
-# =========================
-# FEATURE BUILDER
-# =========================
-def build_feature(kpts):
-    global prev_kpts, prev_speed, mean_degree, std_degree, mean_speed, std_speed
-
-    # ---------- features ----------
-    degree_feat, _ = extract_posture_features(kpts)
-
-    # ---------- speed ----------
-    if prev_kpts is None:
-        speed = torch.zeros(17)
-    else:
-        velocity = kpts - prev_kpts
-        speed = torch.norm(velocity, dim=1)
-
-    # # ---------- acceleration ----------
-    # if prev_speed is None:
-    #     accel = torch.zeros(17)
-    # else:
-    #     accel = torch.abs(speed - prev_speed)
-
-    prev_kpts = kpts.clone()
-    prev_speed = speed.clone()
-
-    # ---------- angle → sin/cos ----------
-    angle_rad = torch.deg2rad(degree_feat)
-    sin_feat = torch.sin(angle_rad)
-    cos_feat = torch.cos(angle_rad)
-
-    angle_feat = torch.cat([sin_feat, cos_feat], dim=0)  # [18]
-
-    # norm angle and speed
-    norm_degree = (angle_feat - mean_degree) / std_degree
-    norm_speed = (speed - mean_speed) / std_speed
-
-    # angle and speed concatenate
-    hybrid_feat = np.hstack([norm_degree, norm_speed]).astype(np.float32)  # [35]
-    feat = torch.tensor(hybrid_feat, dtype=torch.float32)
-
-    # # ---------- normalize ----------
-    # pose_feat = pose_feat.numpy()
-    # pose_feat = (pose_feat - mean) / std
-
-    return feat
 
 
 # =========================
@@ -394,34 +293,61 @@ current_proposed_task = None
 
 print("CLI commands: y=approve, n=reject, h=hold, s=stop, r=resume latest pending task")
 
+kinematic_tracker = setup_filtering()
+norm_real_time = NormRealTime(NORM_PATH, SELECTED_FEATS)
+
+last_stable_step_id = None
+last_progress_by_step = {}
+requested_task_ids = set()
+
 while True:
     ret, frame = cap.read()
     if not ret:
         break
 
     results = yolo_model(frame)
+    
     result = results[0]
 
     if result.keypoints is not None and len(result.keypoints.xy) > 0:
-        raw_kpts = result.keypoints.xyn[0].cpu()
-        kpts = normalize_keypoints(raw_kpts)
+        kpts = result.keypoints.xyn[0].cpu()
     else:
         kpts = torch.zeros((17, 2))
 
-    ## CORE!
-    feat = build_feature(kpts)
-    buffer.append(feat)
+    ## SMOOTHING AND FEATURE EXTRACTION
+    smoothed_kpts = smooth_kpt(kpts, kinematic_tracker)
+    feat = extract_features(smoothed_kpts, selected_feats=SELECTED_FEATS)
+    
+    ## NORMALIZATION FEATURES
+    feat = norm_real_time.normalize_features(feat)
+
+    feat_vector = np.concatenate([
+        np.asarray(feat[key].detach().cpu().numpy() if isinstance(feat[key], torch.Tensor) else feat[key], dtype=np.float32).reshape(-1)
+        for key in SELECTED_FEATS
+    ], axis=0)
+    buffer.append(feat_vector)
 
     if len(buffer) == WINDOW_SIZE:
-        x = np.stack(buffer)
-        x = torch.tensor(x).unsqueeze(0).to(DEVICE)
+        x = np.stack(buffer).astype(np.float32)
+        x = torch.tensor(x, dtype=torch.float32).unsqueeze(0).to(DEVICE)
 
         with torch.no_grad():
-            step_logits = model(x)
-            probs = torch.softmax(step_logits, dim=1)
-            raw_pred = torch.argmax(probs, dim=1)
 
-        probs_np = probs.squeeze(0).cpu().numpy()
+#MODEL PREDICTION
+            step_logits, progress_pred = model(x)
+
+            step_probs = torch.softmax(step_logits, dim=1)
+            step_pred = torch.argmax(step_probs, dim=1)
+            confidence = torch.max(step_probs, dim=1).values
+
+            step_id = step_pred.item()
+            progress = progress_pred.item()
+            conf = confidence.item()
+
+
+
+        probs_np = step_probs.squeeze(0).cpu().numpy()
+
         if step_stabilizer is None:
             step_stabilizer = StepIdStabilizer(
                 num_steps=probs_np.shape[0],
@@ -433,31 +359,45 @@ while True:
 
         stable_step_id = step_stabilizer.update(probs_np)
 
-        print(f"Raw Step: {raw_pred.item()} | Stable Step: {stable_step_id} | Prob: {probs_np}")
+        print(f"Raw Step: {step_id} | Stable Step: {stable_step_id} | Progress: {progress}")
 
         # send message to gh/robot through local UDP
-        if stable_step_id is not None:
-            msg_gh = None
-            step_progress = get_step_progress(stable_step_id, probs_np)
+        if step_id is not None:
+
+            if last_stable_step_id is not None and step_id != last_stable_step_id:
+                last_progress_by_step.clear()
+
+            last_stable_step_id = step_id
+
+            last_progress = last_progress_by_step.get(step_id,None)
+            
+            #GET THRESHOLD:
+            threshold = TRAJECTORY_CONFIG[step_id]["threshold"]
+
+            cross_threshold = (last_progress is not None and last_progress<=threshold and progress>threshold)
+            
+            msg_gh = None  
+
             current_proposed_task = build_current_task(
-                stable_step_id,
-                step_progress,
+                step_id,
+                progress,
                 TRAJECTORY_CONFIG,
             )
 
-            if permission_should_be_requested(
-                current_proposed_task,
-                GLOBAL_ACTIVATION_CONFIG["progress_threshold"],
-            ):
+            last_progress_by_step[step_id] = progress
+            task_id = current_proposed_task.get("task_id", f"step_{step_id}")
+            
+            if cross_threshold and task_id not in requested_task_ids:
                 # In this MVP version, inference pauses during the confirmation
                 # window so the terminal prompt stays readable.
+                requested_task_ids.add(task_id)
                 activation_state = ActivationState.ASK_PERMISSION
 
                 print("\n" + "=" * 60)
                 print("[CONFIRMATION WINDOW]")
                 print(f"Robot proposes: {current_proposed_task['suggested_action']}")
                 print(f"Step ID for GH trajectory: {current_proposed_task['step_id']}")
-                print(f"Normalized progress: {step_progress:.2f}")
+                print(f"Normalized progress: {progress:.2f}")
                 print(f"Please respond within {CONFIRMATION_TIMEOUT:.1f}s")
                 print("Input: y=approve, n=reject / add to pending")
                 print("=" * 60)
@@ -470,7 +410,7 @@ while True:
                     # Send START_TASK to GH / robot only after permission is granted.
                     msg_gh = build_msg(
                         stable_step_id=current_proposed_task["step_id"],
-                        step_progress=current_proposed_task["step_progress"],
+                        progress=current_proposed_task["step_progress"],
                         robot_capable=True,
                         opportunity_detected=True,
                         activation_state_value=activation_state.value,

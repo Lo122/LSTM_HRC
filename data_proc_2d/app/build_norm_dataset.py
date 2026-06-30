@@ -90,17 +90,6 @@ class NormDatasetBuilder:
 
             out[k] = ((x - mean) / std).astype(np.float32)
 
-        # ========================================================
-        # Feature Engineering Conclusion
-        # ========================================================
-
-        # feature combo (add more if resonable)
-        # pol_angles (T,13) + joint_angles (T,7) -> (T,20)
-        out["angles_combined"] = np.concatenate(
-            [out["pol_angles"], out["joint_angles"]],
-            axis=1
-        ).astype(np.float32)
-
         return out, labels
 
     def build_dataset(self, pt_path, out_path):
@@ -166,6 +155,7 @@ if __name__ == "__main__":
     train_files = sorted([f for f in os.listdir(seg_pt_train_dir) if f.endswith(".pt")])
     #return mean and std for each feature type (degree, ratio, speed, accel) in order to normalize data when building dataset
     norm_stats  = compute_global_norm_stats(train_files)
+
     np.savez(f"data_proc_2d/dataset/norm_{today_date}.npz", **norm_stats)
     builder = NormDatasetBuilder(norm_stats)
 
