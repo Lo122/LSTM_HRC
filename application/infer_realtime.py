@@ -29,6 +29,14 @@ import math
 
 from copy import deepcopy
 
+
+# =========================
+# CONFIG
+# =========================
+SELECTED_FEATS = ["pol_angles","joint_angles","ratios"]
+MODEL_PATH = Path(r"C:\Users\loy49\Desktop\REPO\LSTM_HRC\model_lstm\runs\exp_2026-06-28_15-27-49\best_model.pth")
+NORM_PATH = r"C:\Users\loy49\Desktop\REPO\LSTM_HRC\data_proc_2d\dataset\norm_2026-06-27.npz"
+
 # =========================
 # NEW: activation / confirmation imports
 # =========================
@@ -274,11 +282,7 @@ def build_msg(
     }
 
 
-# =========================
-# CONFIG
-# =========================
-MODEL_PATH = r"lstm_hrc.pth"
-NORM_PATH = r"norm_stats.npz"
+
 
 WINDOW_SIZE = 120
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
