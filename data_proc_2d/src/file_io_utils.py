@@ -6,7 +6,7 @@ import sys
 from typing import Any
 import re
 
-from altair import value
+# from altair import value
 import pandas as pd
 
 UTILITY_MODULE_ROOT = Path(__file__).resolve().parents[2]
