@@ -52,7 +52,7 @@ def rename_video_files(video_path: Path, suffixes: str, logger: logging.Logger) 
             )
             for counter, video_file in enumerate(video_files, start=1):
                 
-                file_name = f"video__{camera_name}_uid-{user_id}_take-{counter}"
+                file_name = f"video__{camera_name}_uid-{user_id}_take-{counter:02}"
                 
                 target_file_path = GOOGLE_DRIVE_ROOT_PATH / camera_name / file_name
                 target_file_path = target_file_path.with_suffix(".mp4")

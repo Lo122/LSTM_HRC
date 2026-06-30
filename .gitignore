@@ -36,4 +36,10 @@ design/gh_rhino/*.3dm
 design/gh_rhino/*.3dmbak
 design/gh_rhino/*.gh
 
+robot_control/src/*.gh
+robot_control/src/*.3dm
+robot_control/src/*.3dmbak
+robot_control/results
+robot_control/dataset
+
 *.mp4

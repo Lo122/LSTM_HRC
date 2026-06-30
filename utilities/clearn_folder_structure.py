@@ -2,11 +2,20 @@ import argparse
 import re
 from dataclasses import dataclass
 from pathlib import Path
+import sys
 
+PROJECT_SRC_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_SRC_ROOT))
+from utilities import file_io
+from utilities import log_utils
+from data_proc_2d.src import file_io_utils
 
-VIDEO_ROOT_PATH = Path(r"G:\.shortcut-targets-by-id\1Ykdzx6UjCe0KPKy_6M4LgCOTxKK6Awgy\Videos\cropped")
-DEFAULT_PREFIX = "video"
-VIDEO_SUFFIXES = {".mp4", ".mov", ".avi", ".mkv", ".m4v"}
+# VIDEO_ROOT_PATH = Path(r"G:\.shortcut-targets-by-id\1Ykdzx6UjCe0KPKy_6M4LgCOTxKK6Awgy\Videos\cropped")
+VIDEO_ROOT_PATH = Path(r"C:\Users\Owner\Downloads\.json")
+
+DEFAULT_PREFIX = "label"
+VIDEO_SUFFIXES = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".json"}
 DEFAULT_LEGACY_USER_MAP = {
     "B": "01",
     "Y": "02",
@@ -27,6 +36,13 @@ LEGACY_CAM_PATTERN = re.compile(
     r"^cam(?:era)?[-_ ]?(?P<camera_id>\d+)(?:[-_ ][A-Za-z0-9]+)*[-_ ](?P<user_code>[A-Za-z]+)(?P<take_id>\d+)$",
     re.IGNORECASE,
 )
+
+
+STEP_PATTERN = re.compile(
+    r"^cam(?P<camera_id>\d+)_(?P<user_code>[A-Z])(?P<take_id>\d+)(?:_.*)?$",
+    re.IGNORECASE
+    )
+
 
 
 @dataclass(frozen=True)
@@ -88,23 +104,40 @@ def parse_video_name(
         )
 
     legacy_match = LEGACY_CAM_PATTERN.fullmatch(stem)
-    if not legacy_match:
-        return None
+    if legacy_match:
 
-    user_code = legacy_match.group("user_code").upper()
-    user_id = legacy_user_map.get(user_code)
-    if user_id is None:
-        raise ValueError(
-            f"Missing --user-map entry for legacy participant code '{user_code}' in {video_file.name}"
+        user_code = legacy_match.group("user_code").upper()
+        user_id = legacy_user_map.get(user_code)
+        if user_id is None:
+            raise ValueError(
+                f"Missing --user-map entry for legacy participant code '{user_code}' in {video_file.name}"
+            )
+
+        return VideoNameParts(
+            prefix=prefix,
+            camera_id=pad_id(legacy_match.group("camera_id")),
+            user_id=user_id,
+            take_id=pad_id(legacy_match.group("take_id")),
+            extension=suffix.lstrip("."),
         )
+    
+    
+    step_match = STEP_PATTERN.fullmatch(stem)
+    if step_match:
+        user_code = step_match.group("user_code").upper()
+        user_id = legacy_user_map.get(user_code)
+        if user_id is None:
+            raise ValueError(
+                f"Missing --user-map entry for legacy participant code '{user_code}' in {video_file.name}"
+            )
 
-    return VideoNameParts(
-        prefix=prefix,
-        camera_id=pad_id(legacy_match.group("camera_id")),
-        user_id=user_id,
-        take_id=pad_id(legacy_match.group("take_id")),
-        extension=suffix.lstrip("."),
-    )
+        return VideoNameParts(
+            prefix=prefix,
+            camera_id=pad_id(step_match.group("camera_id")),
+            user_id=user_id,
+            take_id=pad_id(step_match.group("take_id")),
+            extension=suffix.lstrip("."),
+        )
 
 
 def rename_videos(
@@ -201,6 +234,49 @@ def build_parser() -> argparse.ArgumentParser:
 
     return parser
 
+def modify_json_file(file_path: Path, logger) -> None:
+    
+    data = file_io.load_json(str(file_path), logger=logger)
+    # Perform modifications to the data as needed
+    # For example, let's say we want to add a new key-value pair
+    video_path = data.get("video_path", file_path.stem)  # Add video name if not already present
+    video_path =  Path(video_path)
+    
+    match = NORMALIZED_PATTERN.fullmatch(file_path.stem)
+    if not match:
+        logger.warning("Filename does not match expected pattern: %s", file_path.name)
+        return
+    video_path = video_path.parents[2] / "cropped" / f"cam-{pad_id(match.group('camera_id'))}" # Modify the path to match the new structure
+    
+    video_file_name = "video__cam-{}_uid-{}_take-{}.mp4".format(
+        pad_id(match.group("camera_id")),
+        pad_id(match.group("user_id")),
+        pad_id(match.group("take_id")),
+    )
+    
+    data["video_path"] = str(video_path / video_file_name)  # Update the video path in the JSON data
+    file_io.save_json(data, str(file_path), logger=logger)
+    logger.info("Modified JSON file: %s", file_path)
+
+
+
+def proc_labels():
+    logger = log_utils.setup_logger("folder_structure_cleanup")
+    root_dir = Path(r"G:\My Drive\University of Stuttgart\ITECH_Thesis\Videos\archive\annotations")
+    out_root_dir = Path(r"G:\My Drive\University of Stuttgart\ITECH_Thesis\Videos\dataset\annotations")
+    json_files = file_io_utils.iter_files(root_dir, extension=".json")
+    for json_file in json_files:
+        data, video_file_name = file_io_utils.load_step_ids_from_json(json_file, logger=logger)
+        
+        
+        json_file_path = out_root_dir / json_file.parent.relative_to(root_dir) / json_file.name
+        file_io.save_json(data, str(json_file_path), logger=logger)  # Save the modified JSON back to the same file
+        
+        
+    
+
+
+
 
 def main() -> None:
     parser = build_parser()
@@ -220,4 +296,12 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    
+    proc_labels()
+    
+    # anno_root_dir = Path(r"G:/My Drive/University of Stuttgart/ITECH_Thesis/Videos/archive/annotations")
+    # for json_file in anno_root_dir.rglob("*.json"):
+    #     modify_json_file(json_file, logger=log_utils.setup_logger("folder_structure_cleanup"))
+    
+    
+    # main()
