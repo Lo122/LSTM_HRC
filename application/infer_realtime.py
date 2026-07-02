@@ -200,39 +200,42 @@ TRAJECTORY_CONFIG = {
     0: {
         "robot_capable": True,
         "suggested_action": "assist_lifting",
-        "threshold": 0.4
+        "threshold": 0.01
     },
 
     1: {
-        "robot_capable": False,
+        "robot_capable": True,
         "suggested_action": "wait",
-        "threshold": 1
+        "threshold": 0.01
     },
 
     2: {
         "robot_capable": True,
         "suggested_action": "wait",
-        "threshold": 0.3
+        "threshold": 0.01
     },
 
     3: {
-        "robot_capable": False,
+        "robot_capable": True,
         "suggested_action": "wait",
-        "threshold": 1
+        "threshold": 0.01
     },
 
     4: {
         "robot_capable": True,
         "suggested_action": "continue_screwing",
-        "threshold": 0.7
+        "threshold": 0.01
     },
     5: {
         "robot_capable": True,
         "suggested_action": "hold_panel",
-        "threshold": 0.4
+        "threshold": 0.01
     },
 }
 
+len_robot_task = sum(
+    1 for task in TRAJECTORY_CONFIG.values() if task.get("robot_capable", False)
+)
 
 
 def build_msg(
@@ -284,7 +287,7 @@ step_stabilizer = None
 # =========================
 
 # use another video for testing
-test_vid = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\cropped\cam-01\video__cam-01_uid-01_take-03.mp4"
+test_vid = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\raw\cam-04\video__cam-04_uid-01_take-01.mp4"
 cap = cv2.VideoCapture(test_vid)
 
 # NEW: store last proposed task while waiting for human confirmation.
@@ -369,7 +372,7 @@ while True:
 
             last_stable_step_id = step_id
 
-            last_progress = last_progress_by_step.get(step_id,None)
+            last_progress = last_progress_by_step.get(step_id,0)
             
             #GET THRESHOLD:
             threshold = TRAJECTORY_CONFIG[step_id]["threshold"]
@@ -386,6 +389,9 @@ while True:
 
             last_progress_by_step[step_id] = progress
             task_id = current_proposed_task.get("task_id", f"step_{step_id}")
+
+            if len(requested_task_ids)==len_robot_task:
+                requested_task_ids.clear()
             
             if cross_threshold and task_id not in requested_task_ids:
                 # In this MVP version, inference pauses during the confirmation
