@@ -367,6 +367,9 @@ while True:
         # send message to gh/robot through local UDP
         if step_id is not None:
 
+#need to add ros and rosbridge to send the message to the robot
+#CHANGE THIS LOOP LATER!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
             if last_stable_step_id is not None and step_id != last_stable_step_id:
                 last_progress_by_step.clear()
 
