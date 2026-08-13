@@ -41,7 +41,7 @@ down, `--gravity-align`, and BoneLengthConstraintFilter):
   noise is already handled by the stabilizer above.
 
 Usage:
-    uv run python generate_lstm_training_data.py `
+    uv run python data_proc_3d/app/generate_lstm_training_data.py `
         --video-dir "G:\\My Drive\\University of Stuttgart\\ITECH_Thesis\\Videos\\raw\\cam-04" `
         --output-dir "C:\\Users\\Owner\\OneDrive - Universität Stuttgart\\2025_26_Thesis\\codes\\LSTM_HRC\\data_proc_3d\\results" `
         --device cuda:0 `
@@ -53,11 +53,10 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-
 import cv2
 import numpy as np
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from skeleton_pipeline.bone_length_filter import BoneLengthConstraintFilter
 from skeleton_pipeline.calibration_io import load_extrinsics, load_intrinsics
 from skeleton_pipeline.keypoint_filter import KeypointOutlierHoldFilter

@@ -33,7 +33,9 @@ from skeleton_pipeline.coco_h36m import coco_to_h36m_conf, coco_to_h36m_xy
 
 MOTIONBERT_REPO_DIR = Path(os.environ.get(
     "MOTIONBERT_REPO_DIR",
-    Path(__file__).resolve().parents[3] / "MotionBERT",
+    # parents[3] is the LSTM_HRC repo root itself; MotionBERT is cloned as
+    # its sibling (.../codes/MotionBERT), one level further up.
+    Path(__file__).resolve().parents[4] / "MotionBERT",
 ))
 
 DEFAULT_CONFIG = MOTIONBERT_REPO_DIR / "configs" / "pose3d" / "MB_ft_h36m.yaml"
