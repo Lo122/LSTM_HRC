@@ -1,0 +1,61 @@
+[project]
+name = "lstm-training-data-gen"
+version = "0.1.0"
+description = "Minimal YOLO + MotionBERT batch pipeline for generating LSTM training data (data_proc_3d/app)"
+requires-python = ">=3.9,<3.12"
+dependencies = [
+    "numpy>=1.24,<2.0",
+    "opencv-python>=4.8",
+    # Feature plots only (skeleton_pipeline/plotting/feature_plots.py) --
+    # the per-frame video render (skeleton_pipeline/render/) is plain
+    # OpenCV, not matplotlib, since matplotlib's per-frame cost would be
+    # far too slow for a video writer (see that module's docstring).
+    "matplotlib>=3.7",
+    # Savitzky-Golay velocity/acceleration (skeleton_pipeline/features/
+    # h36m_features.py's compute_velocity/compute_acceleration).
+    "scipy>=1.10",
+    # Label-matrix building in build_training_pairs.py (per-step/status score
+    # DataFrames -> idxmax/max per frame) -- same tool data_proc_2d's (now
+    # lost) label pipeline used, see that script's module docstring.
+    "pandas>=2.0,<3.0",
+    "torch==2.1.0+cu121",
+    "torchvision==0.16.0+cu121",
+    "ultralytics>=8.0",
+    # MotionBERT (pure PyTorch, see skeleton_pipeline/motionbert_lifter.py)
+    # -- only its lightweight, actually-needed-for-inference deps, same
+    # subset as world_pose's own `motionbert` extra (data_proc_3d/src/
+    # pyproject.toml) -- smplx/chumpy/ipdb etc. (mesh recovery, unused
+    # here) deliberately omitted.
+    "tensorboardX>=2.5",
+    "easydict>=1.10",
+    "prettytable>=3.0",
+    "imageio-ffmpeg>=0.4",
+    "roma>=1.4",
+    # setuptools>=81 dropped pkg_resources, which some of the above
+    # (e.g. easydict/tensorboardX) still import at runtime -- pinned here
+    # for the same reason world_pose's own pyproject.toml pins it.
+    "setuptools<81",
+]
+
+# Deliberately NOT included (this is the whole point of this separate
+# venv, see the module docstrings that reference it): mmcv/mmpose/mmdet
+# (world_pose's "live" extra needs them for its own lifters/RTMW3D --
+# skeleton_pipeline/coco_h36m.py reimplements the one utility function
+# this pipeline actually needed from mmpose, so the whole stack is
+# avoidable here), tensorflow/tensorflow-hub (metrabs), record3d (iPhone
+# live capture -- this pipeline only reads existing video files), roslibpy,
+# depth_pro.
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu121" }
+torchvision = { index = "pytorch-cu121" }
+
+[[tool.uv.index]]
+name = "pytorch-cu121"
+url = "https://download.pytorch.org/whl/cu121"
+explicit = true
+
+[tool.uv]
+package = false
+environments = ["sys_platform == 'win32'"]
+override-dependencies = ["triton; sys_platform == 'linux'"]
