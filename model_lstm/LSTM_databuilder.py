@@ -19,20 +19,18 @@ class AssistSequenceDataset(Dataset):
 
         data = np.load(npz_path)
 
-        self.pose = data["X_pose"]      # [T, pose_dim]
-        self.elem = data["X_elem"]      # [T, elem_dim]
-        self.env  = data["X_env"]       # [T, env_dim]
+        self.deg = data["X_degree"]      # [T, pose_dim]
+        self.speed = data["X_speed"]      # [T, step_dim]
 
-        self.urg  = data["Y_urgency"]   # [T]
-        self.type = data["Y_type"]      # [T]
-
+        self.step = data["X_step"]      # [T, step_dim]
+        
         self.window_size = window_size
         self.stride = stride
         self.predict_offset = predict_offset
         self.mode = mode
         self.use_type = use_type
 
-        self.T = len(self.pose)
+        self.T = len(self.deg)  # total number of frames
 
         # ===== construct sample index  =====
         self.indices = []
@@ -49,37 +47,27 @@ class AssistSequenceDataset(Dataset):
         target_index = end - 1 + self.predict_offset
 
         # ===== concatenate features =====
-        x_pose = self.pose[start:end]
-        x_elem = self.elem[start:end]
-        x_env  = self.env[start:end]
+        x_deg = self.deg[start:end]
+        x_speed = self.speed[start:end]
+        # x_elem = self.elem[start:end]
+        # x_env  = self.env[start:end]
 
-        x = np.concatenate([x_pose, x_elem, x_env], axis=1)
+        # x = np.concatenate([x_pose, x_elem, x_env], axis=1)
+        x = np.hstack([x_deg, x_speed])  # concatenate degree and speed features
+        x = x.astype(np.float32)  # ensure it's float32 for PyTorch
         x = torch.tensor(x, dtype=torch.float32)
 
         # ===== construct label =====
         if self.mode == "seq2one":
-            y_urg = self.urg[target_index]
 
-            if self.use_type:
-                y_type = self.type[target_index]
-                y = (
-                    torch.tensor(y_urg, dtype=torch.float32),
-                    torch.tensor(y_type, dtype=torch.long)
-                )
-            else:
-                y = torch.tensor(y_urg, dtype=torch.float32)
+            y_step = self.step[target_index]
+            y = torch.tensor(y_step, dtype=torch.float32)
 
         elif self.mode == "seq2seq":
-            y_urg = self.urg[start:end]
 
-            if self.use_type:
-                y_type = self.type[start:end]
-                y = (
-                    torch.tensor(y_urg, dtype=torch.float32),
-                    torch.tensor(y_type, dtype=torch.long)
-                )
-            else:
-                y = torch.tensor(y_urg, dtype=torch.float32)
+
+            y_step = self.step[start:end]
+            y = torch.tensor(y_step, dtype=torch.float32)
 
         else:
             raise ValueError("mode must be seq2one or seq2seq")

@@ -21,7 +21,7 @@ class AssistLSTM(nn.Module):
         )
 
         self.type_head = nn.Linear(hidden_dim, num_types)
-        self.urgency_head = nn.Linear(hidden_dim, 1)
+        # self.urgency_head = nn.Linear(hidden_dim, 1)
 
     def forward(self, x):
         """
@@ -31,7 +31,7 @@ class AssistLSTM(nn.Module):
         h_last = out[:, -1, :]        # [B, H]
 
         type_logits = self.type_head(h_last)              # [B, num_types]
-        urgency = torch.sigmoid(self.urgency_head(h_last))  # [B, 1]
-        urgency = urgency.squeeze(1)                      # [B]
+        # urgency = torch.sigmoid(self.urgency_head(h_last))  # [B, 1]
+        # urgency = urgency.squeeze(1)                      # [B]
 
-        return type_logits, urgency
+        return type_logits

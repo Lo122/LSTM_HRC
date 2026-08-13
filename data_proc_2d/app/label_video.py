@@ -6,8 +6,8 @@ from datetime import datetime
 # ==========================
 # CONFIG
 # ==========================
-VIDEO_PATH = r"data\video\lift.mp4"
-OUTPUT_JSON = r"data/dataset/labels_lift.json"
+VIDEO_PATH = r"G:\.shortcut-targets-by-id\1Ykdzx6UjCe0KPKy_6M4LgCOTxKK6Awgy\videos\processed\cam2\cam2_Y1.mp4"
+OUTPUT_JSON = r"data/video_labels/labels_lift.json"
 
 ASSIST_KEYS = {
     "h": ("HOLD", 1),
@@ -36,7 +36,7 @@ def run_label_tool():
     print("\n==============================")
     print(" WoZ Video Label Tool (Segment Mode)")
     print("==============================")
-    print("SPACE : pause / resume (pause时记录START)")
+    print("SPACE : pause / resume")
     print("ENTER : mark END")
     print("h     : select assist type")
     print("u     : undo")
