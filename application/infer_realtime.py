@@ -67,13 +67,17 @@ WINDOW_SIZE = model_config["window_size"]
 INPUT_DIM = model_config["input_dim"]
 HINDDEN_DIM = model_config["hidden_dim"]
 NUM_STEPS = model_config["num_steps"]
+NUM_LAYERS = model_config.get("num_layers", 1)
+DROPOUT = model_config.get("dropout", 0.0)
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 model = AssistLSTM(
     input_dim = INPUT_DIM,
     hidden_dim = HINDDEN_DIM,
-    num_steps = NUM_STEPS
+    num_steps = NUM_STEPS,
+    dropout = DROPOUT,
+    num_layers = NUM_LAYERS
 ).to(DEVICE)
 
 model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))

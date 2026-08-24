@@ -23,24 +23,41 @@ from tqdm import tqdm
 # Config
 # ===========================================================
 # json_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset\annotations\all"
-pt_dir = r"G:\.shortcut-targets-by-id\1Ykdzx6UjCe0KPKy_6M4LgCOTxKK6Awgy\Videos\dataset\original"
-pt_train_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset\train\raw"
-# pt_val_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset\val\raw"
-pt_test_norm_dir = r"G:\.shortcut-targets-by-id\1Ykdzx6UjCe0KPKy_6M4LgCOTxKK6Awgy\Videos\dataset\original\norm"
+pt_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset_3d\original"
+pt_train_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset_3d\train\raw"
 
+
+# FEATURE_KEYS = [
+#     "velocity_scale",
+#     "acceleration_scale",
+#     "velocity_xy",
+#     "acceleration_xy",
+#     "pol_vectors",
+#     "pol_distance",
+#     "pol_angles",
+#     "pol_distance_velocity",
+#     "pol_angluer_velocity",
+#     "joint_angles",
+#     "ratios",
+#     "dist_ratios",
+# ]
 FEATURE_KEYS = [
-    "velocity_scale",
-    "acceleration_scale",
-    "velocity_xy",
-    "acceleration_xy",
-    "pol_vectors",
-    "pol_distance",
-    "pol_angles",
-    "pol_distance_velocity",
-    "pol_angluer_velocity",
-    "joint_angles",
-    "ratios",
-    "dist_ratios",
+    'joint_speed', 
+    'joint_acceleration', 
+    'joint_velocity_x', 
+    'joint_velocity_y', 
+    'joint_velocity_z', 
+    'joint_acceleration_x', 
+    'joint_acceleration_y', 
+    'joint_acceleration_z', 
+    'position_x_relative_to_pelvis', 
+    'position_y_relative_to_pelvis', 
+    'position_z_relative_to_pelvis', 
+    'polar_azimuth', 
+    'polar_elevation', 
+    'joint_angles', 
+    'ratios', 
+    'distance_from_center'
 ]
 
 def compute_global_norm_stats(pt_files):
@@ -101,11 +118,20 @@ class NormDatasetBuilder:
         for k, v in feat_dict.items():
             save_dict[k] = v
 
-        # ===== save labels =====
+        # ===== save labels for 2d =====
+        # save_dict["step_id"] = labels["step_id"].numpy().astype(np.int64)
+        # save_dict["step_id_vector"] = labels["step_id_vector"].numpy().astype(np.float32)
+        # save_dict["status_id"] = labels["status_id"].numpy().astype(np.int64)
+        # save_dict["task_progress"] = labels["task_progress"].numpy().astype(np.float32)/ 100.0  # normalize to [0,1]
+
+        #'step_id', 'step_id_prob', 'status_id', 'status_id_prob', 'task_progress', 'step_id_plateau', 'step_id_plateau_prob', 'status_id_plateau', 'status_id_plateau_prob', 'step_id_vector', 'status_id_vector', 'step_id_plateau_vector', 'status_id_plateau_vector', 'task_progress_vector'
+        # ===== save labels for 3d =====
         save_dict["step_id"] = labels["step_id"].numpy().astype(np.int64)
         save_dict["step_id_vector"] = labels["step_id_vector"].numpy().astype(np.float32)
         save_dict["status_id"] = labels["status_id"].numpy().astype(np.int64)
         save_dict["task_progress"] = labels["task_progress"].numpy().astype(np.float32)/ 100.0  # normalize to [0,1]
+
+
 
         # ===== save npz =====
         np.savez_compressed(out_path, **save_dict)
@@ -141,25 +167,27 @@ if __name__ == "__main__":
 
     today_date = datetime.datetime.now().strftime("%Y-%m-%d")
 
-    seg_pt_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset\segment"
-    seg_pt_test_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset\test\raw"
-    seg_pt_val_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset\val\raw"
-    seg_pt_train_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset\train\raw"
+    # seg_pt_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset\segment"
+    seg_pt_test_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset_3d\test\raw"
+    seg_pt_val_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset_3d\val\raw"
+    seg_pt_train_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset_3d\train\raw"
     
     #split train/test dataset 80/20
-    # train_files, test_files = split_raw_pt_files(seg_pt_train_dir, seg_pt_test_dir, test_ratio=0.2)
+    train_files, test_files = split_raw_pt_files(seg_pt_train_dir, seg_pt_test_dir, test_ratio=0.2)
 
     #split test/val dataset 10/10
-    # test_files, val_files = split_raw_pt_files(seg_pt_test_dir,seg_pt_val_dir,test_ratio=0.5)
+    test_files, val_files = split_raw_pt_files(seg_pt_test_dir,seg_pt_val_dir,test_ratio=0.5)
+
+
 
     train_files = sorted([f for f in os.listdir(seg_pt_train_dir) if f.endswith(".pt")])
     #return mean and std for each feature type (degree, ratio, speed, accel) in order to normalize data when building dataset
     norm_stats  = compute_global_norm_stats(train_files)
 
-    np.savez(f"data_proc_2d/dataset/norm_{today_date}.npz", **norm_stats)
+    np.savez(f"data_proc_3d/dataset/norm_{today_date}.npz", **norm_stats)
     builder = NormDatasetBuilder(norm_stats)
 
-    out_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset\train\norm" 
+    out_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset_3d\train\norm" 
     for pt_file in train_files:
         pt_path = os.path.join(seg_pt_train_dir, pt_file)
         

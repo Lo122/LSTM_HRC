@@ -3,21 +3,6 @@ import torch
 from torch.utils.data import Dataset
 
 
-FEATURE_KEYS = [
-    "velocity_scale",
-    "acceleration_scale",
-    "velocity_xy",
-    "acceleration_xy",
-    "pol_vectors",
-    "pol_distance",
-    "pol_angles",
-    "pol_distance_velocity",
-    "pol_angluer_velocity",
-    "joint_angles",
-    "ratios",
-    "dist_ratios",
-]
-
 
 class AssistSequenceDataset(Dataset):
     def __init__(

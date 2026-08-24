@@ -10,18 +10,21 @@ from torch.utils.data import Dataset, DataLoader
 # Model
 # ============================================================
 class AssistLSTM(nn.Module):
-    def __init__(self, input_dim, hidden_dim, num_steps):
+    def __init__(self, input_dim, hidden_dim, num_steps, dropout=0.5, num_layers=1):
         super().__init__()
 
         self.lstm = nn.LSTM(
             input_size=input_dim,
             hidden_size=hidden_dim,
+            num_layers=num_layers,
+            dropout=dropout if num_layers > 1 else 0.0,
             batch_first=True
         )
 
         self.shared = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU()
+            nn.ReLU(),
+            nn.Dropout(p=dropout)
         )
 
         self.step_head = nn.Linear(hidden_dim, num_steps)
