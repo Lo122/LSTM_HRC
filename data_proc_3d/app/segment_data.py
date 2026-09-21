@@ -18,8 +18,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from skeleton_pipeline.dataset import io_utils, segment
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_IN_DIR = PROJECT_ROOT / "data_proc_3d" / "results" / "dataset" / "original"
-DEFAULT_OUT_DIR = PROJECT_ROOT / "data_proc_3d" / "results" / "dataset" / "segment"
+GOOGLE_DRIVE_ROOT = Path(r"G:\.shortcut-targets-by-id\1Ykdzx6UjCe0KPKy_6M4LgCOTxKK6Awgy\Videos")
+DEFAULT_IN_DIR =  GOOGLE_DRIVE_ROOT / "dataset" / "skeleton_3d" / "ceiling_panel_installation_02" / "augmented_rotations"
+DEFAULT_OUT_DIR =  GOOGLE_DRIVE_ROOT / "dataset" / "skeleton_3d" / "ceiling_panel_installation_02" / "augmented_rotations_segment"
 LOG_PATH = PROJECT_ROOT / "logs" / "segment_data_3d.log"
 
 SEGMENT_SIZE = 1000  # frames per segment, adjust as needed

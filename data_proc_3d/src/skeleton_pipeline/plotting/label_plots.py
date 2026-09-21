@@ -1,6 +1,6 @@
 """Debug plot for the label curves built by skeleton_pipeline.dataset.labels
--- one figure with one panel per label-score DataFrame (step_id/status_id in
-both smoothing variants, plus task_progress), sibling to feature_plots.py's
+-- one figure with one panel per label-score DataFrame (step_id in both
+smoothing variants, plus task_progress), sibling to feature_plots.py's
 per-feature-panel plots."""
 from pathlib import Path
 

@@ -10,11 +10,15 @@ import numpy as np
 from ..features.h36m_features import compute_all_features
 
 
-def extract_features(npz_file: Path, logger) -> tuple[dict, dict]:
+def extract_features(npz_file: Path, logger, causal: bool = False) -> tuple[dict, dict]:
     """Returns (metadata, features): features is {panel_key: torch.Tensor
     of shape (T, n_cols_in_panel)}; metadata carries fps/frame count/bone
     lengths plus panel_columns (panel_key -> column names, in tensor
-    column order) so downstream code can recover individual feature names."""
+    column order) so downstream code can recover individual feature names.
+
+    causal: forwarded to compute_all_features. True makes the features
+    reproducible by the live streaming extractor; see h36m_features.
+    _savgol_derivative for why the centered default is not."""
     data = np.load(npz_file, allow_pickle=True)
     positions = data["keypoints_3d"]          # (T, 17, 3), root-relative, meters, may contain NaN rows
     fps = float(data["fps"])
@@ -24,7 +28,7 @@ def extract_features(npz_file: Path, logger) -> tuple[dict, dict]:
     logger.info("  %s frames, %.1f%% with a valid (non-NaN) skeleton, fps=%.2f",
                 total_frames, 100.0 * n_valid / max(total_frames, 1), fps)
 
-    features, panel_columns = features_from_positions(positions, fps)
+    features, panel_columns = features_from_positions(positions, fps, causal=causal)
 
     metadata = {
         "source_npz": str(npz_file),
@@ -35,11 +39,17 @@ def extract_features(npz_file: Path, logger) -> tuple[dict, dict]:
         "body_scale_m": float(data["body_scale_m"]),
         "gravity_aligned": bool(data["gravity_aligned"]),
         "panel_columns": panel_columns,
+        # Recorded so a .pt says which estimator built it -- otherwise a
+        # centered-window and a causal-window dataset are indistinguishable
+        # on disk, and mixing them silently is exactly the failure this flag
+        # exists to prevent.
+        "causal_features": bool(causal),
     }
     return metadata, features
 
 
-def features_from_positions(positions: np.ndarray, fps: float) -> tuple[dict, dict]:
+def features_from_positions(positions: np.ndarray, fps: float,
+                            causal: bool = False) -> tuple[dict, dict]:
     """The reusable core of extract_features(): (T, 17, 3) positions + fps
     -> ({panel_key: torch.Tensor (T, n_cols)}, {panel_key: [column names]}).
     Split out so skeleton_pipeline.dataset.augment can recompute features on
@@ -48,7 +58,7 @@ def features_from_positions(positions: np.ndarray, fps: float) -> tuple[dict, di
     (rotation/noise-sensitive) kinematic features are derived, not after."""
     import torch
 
-    feature_dict, panel_groups = compute_all_features(positions, fps)
+    feature_dict, panel_groups = compute_all_features(positions, fps, causal=causal)
 
     features = {}
     for panel_title, columns in panel_groups.items():

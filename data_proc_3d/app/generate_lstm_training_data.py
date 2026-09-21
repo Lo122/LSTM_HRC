@@ -41,13 +41,17 @@ down, `--gravity-align`, and BoneLengthConstraintFilter):
   noise is already handled by the stabilizer above.
 
 Usage:
-    uv run python data_proc_3d/app/generate_lstm_training_data.py `
-        --video-dir "G:\\My Drive\\University of Stuttgart\\ITECH_Thesis\\Videos\\raw\\cam-04" `
-        --output-dir "C:\\Users\\Owner\\OneDrive - Universität Stuttgart\\2025_26_Thesis\\codes\\LSTM_HRC\\data_proc_3d\\results" `
+    cd "C://Users//Owner//OneDrive - Universität Stuttgart//2025_26_Thesis//codes//LSTM_HRC//data_proc_3d//app"
+    uv run python generate_lstm_training_data.py `
+        --video-dir "G://.shortcut-targets-by-id//1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC//ITECH_Thesis//Videos//raw//cam-06" `
+        --output-dir "G://.shortcut-targets-by-id//1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC//ITECH_Thesis//Videos//dataset//skeleton_3d//ceiling_panel_installation" `
         --device cuda:0 `
-        --motionbert-config "C:\\Users\\Owner\\OneDrive - Universität Stuttgart\\2025_26_Thesis\\codes\\MotionBERT\\configs\\pose3d\\MB_ft_h36m.yaml" `
-        --motionbert-checkpoint "C:\\Users\\Owner\\OneDrive - Universität Stuttgart\\2025_26_Thesis\\codes\\MotionBERT\\checkpoint\\pose3d\\FT_MB_release_MB_ft_h36m\\best_epoch.bin" 
+        --motionbert-config "C://Users//Owner//OneDrive - Universität Stuttgart//2025_26_Thesis//codes//MotionBERT//configs//pose3d//MB_ft_h36m.yaml" `
+        --motionbert-checkpoint "C://Users//Owner//OneDrive - Universität Stuttgart//2025_26_Thesis//codes//MotionBERT//checkpoint//pose3d//FT_MB_release_MB_ft_h36m//best_epoch.bin" `
+        --plots-dir "G://.shortcut-targets-by-id//1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC//ITECH_Thesis//Deliveries//video_analysis//plots" `
+        --render-dir "G://.shortcut-targets-by-id//1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC//ITECH_Thesis//Deliveries//video_analysis//skeleton_render" 
 """
+
 import argparse
 import sys
 import time
@@ -63,11 +67,24 @@ from skeleton_pipeline.keypoint_filter import KeypointOutlierHoldFilter
 from skeleton_pipeline.motionbert_lifter import (
     DEFAULT_CHECKPOINT, DEFAULT_CONFIG, MotionBERTStreamingLifter,
 )
+from skeleton_pipeline.person_tracking import (
+    collect_person_tracks, frames_from_track_ids, link_track_fragments,
+    load_track_overrides, select_dominant_track_id, summarize_tracks,
+)
 from skeleton_pipeline.features.h36m_features import compute_all_features
 from skeleton_pipeline.plotting.feature_plots import plot_panels
 from skeleton_pipeline.render.skeleton_video import FastSkeleton3DRenderer, render_combined_frame
 
+VIDEO_NAME_LIST = [
+    "video__cam-06_uid-02_take-03-1",
+]
+
 VIDEO_EXTENSIONS = (".mp4", ".mov", ".avi", ".mkv", ".m4v")
+
+# Resolved from this file's own location, not the cwd, so the script works
+# when invoked from anywhere. See that file's header for why the project
+# ships its own tracker config instead of using ultralytics' botsort.yaml.
+DEFAULT_TRACKER = Path(__file__).resolve().parent / "trackers" / "botsort_static_cam.yaml"
 
 # H36M bone tree, leg+spine chain used for the convenience body_scale_m
 # estimate (ankle -> hip -> spine -> thorax -> head, one side): NOT a
@@ -75,17 +92,78 @@ VIDEO_EXTENSIONS = (".mp4", ".mov", ".avi", ".mkv", ".m4v")
 # proxy derived from BoneLengthConstraintFilter's own converged lengths.
 _HEIGHT_CHAIN_EDGES = [(0, 1), (1, 2), (2, 3), (0, 7), (7, 8), (8, 9), (9, 10)]
 
+def resolve_target_track(yolo, video_path, args):
+    """Pass 1: track every person over the whole clip, pick the subject.
 
-def run_yolo_2d(yolo, frame, imgsz=None):
-    kwargs = {"imgsz": imgsz} if imgsz is not None else {}
-    results = yolo(frame, verbose=False, **kwargs)
-    if not results or results[0].keypoints is None or results[0].keypoints.xy.numel() == 0:
-        return None, None
-    kpts_xy = results[0].keypoints.xy[0].cpu().numpy()
-    conf = (results[0].keypoints.conf[0].cpu().numpy()
-            if results[0].keypoints.conf is not None
-            else np.ones(kpts_xy.shape[0], dtype=np.float32))
-    return kpts_xy, conf
+    Returns ``{frame_idx: (keypoints_xy, keypoints_conf)}`` for the target
+    person only. See skeleton_pipeline/person_tracking.py for why the target
+    is chosen globally (longest-lived track) rather than frame-by-frame:
+    offline we can see the whole video, and a bystander walking between the
+    camera and the subject otherwise captures a frame-by-frame tracker.
+    """
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return None, {}
+    try:
+        tracks, n_frames = collect_person_tracks(
+            yolo, cap,
+            imgsz=args.yolo_imgsz,
+            max_frames=args.max_frames,
+            tracker=args.tracker,
+            device=args.device,
+        )
+    finally:
+        cap.release()
+
+    # A hand-written override wins outright: no dominant-track guess, no
+    # fragment linking. Use it for clips the heuristic cannot resolve (see
+    # person_tracking.load_track_overrides) -- run review_tracks.py to see
+    # which id is which person before writing one.
+    override_ids = load_track_overrides(args.target_tracks).get(video_path.stem)
+    if override_ids:
+        target_frames, missing = frames_from_track_ids(tracks, override_ids)
+        for line in summarize_tracks(tracks, limit=12):
+            marker = "  <-- manual target" if any(
+                line.startswith(f"id={i} ") for i in override_ids) else ""
+            print(f"    {line}{marker}")
+        if missing:
+            print(f"  WARNING: --target-tracks lists id(s) {missing} that this video "
+                  f"has no track for; check the ids against review_tracks.py.")
+        usable = sum(1 for _xy, conf in target_frames.values()
+                     if int(np.sum(conf >= 0.2)) >= 4)
+        print(f"  MANUAL target tracks {override_ids}: usable in {usable}/{n_frames} "
+              f"frames ({usable / n_frames:.1%}).")
+        return override_ids[0], target_frames
+
+    target_id, usable = select_dominant_track_id(tracks)
+    if target_id is None:
+        for line in summarize_tracks(tracks):
+            print(f"    {line}")
+        print(f"  WARNING: no usable person track found over {n_frames} frames.")
+        return None, {}
+
+    # A tracker gives one id per TRACKLET, not per person -- the subject is
+    # routinely split across several ids by occlusions/dropouts. Stitch the
+    # subject's own fragments back on before deciding what is "detected".
+    target_frames, merged_ids = link_track_fragments(tracks, target_id)
+
+    for line in summarize_tracks(tracks):
+        if line.startswith(f"id={target_id} "):
+            marker = "  <-- target"
+        elif any(line.startswith(f"id={mid} ") for mid in merged_ids):
+            marker = "  <-- merged into target"
+        else:
+            marker = ""
+        print(f"    {line}{marker}")
+
+    merged_usable = sum(
+        1 for _xy, conf in target_frames.values() if int(np.sum(conf >= 0.2)) >= 4)
+    if merged_ids:
+        print(f"  Target track id={target_id} + {len(merged_ids)} fragment(s) "
+              f"{merged_ids}: {usable} -> {merged_usable} usable frames.")
+    print(f"  Target usable in {merged_usable}/{n_frames} frames "
+          f"({merged_usable / n_frames:.1%}), out of {len(tracks)} track(s).")
+    return target_id, target_frames
 
 
 def parse_args():
@@ -98,6 +176,26 @@ def parse_args():
                          help="One <video-stem>.npz written here per input video.")
     parser.add_argument("--yolo-model", type=str, default="data_proc_3d/dataset/model/yolo26m-pose.pt")
     parser.add_argument("--yolo-imgsz", type=int, default=None)
+    parser.add_argument("--target-tracks", type=str, default=None,
+                         help="JSON file of hand-picked track ids per video, e.g. "
+                              '{\"video__cam-07_uid-10_take-01\": [1, 24, 347]}. Listed '
+                              "videos skip automatic target selection and fragment "
+                              "linking entirely and use exactly those tracks; unlisted "
+                              "videos are unaffected. Use it for clips the heuristic "
+                              "cannot resolve -- e.g. where the subject stops working, "
+                              "watches a second person, and leaves the frame. Run "
+                              "review_tracks.py first to see which id is which person.")
+    parser.add_argument("--tracker", type=str, default=str(DEFAULT_TRACKER),
+                         help="Multi-object tracker config for the target-selection pass. "
+                              "Defaults to app/trackers/botsort_static_cam.yaml (BoT-SORT with "
+                              "gmc_method disabled -- measured +36 ms/frame for camera-motion "
+                              "compensation these tripod-mounted cameras don't need, with "
+                              "byte-identical track output; see that file's header). Pass an "
+                              "ultralytics built-in (botsort.yaml, bytetrack.yaml, ...) or your "
+                              "own path to override. The subject is then chosen as the "
+                              "longest-lived track over the whole video -- see "
+                              "skeleton_pipeline/person_tracking.py for why that is decided "
+                              "globally rather than frame-by-frame.")
     parser.add_argument("--device", type=str, default="cpu",
                          help="'cpu', 'cuda:0', etc. -- passed to both YOLO and MotionBERT.")
     parser.add_argument("--motionbert-config", type=str, default=DEFAULT_CONFIG)
@@ -147,6 +245,9 @@ def parse_args():
                               "line per joint/column. On by default.")
     parser.add_argument("--plots-dir", type=str, default=None,
                          help="Default: <output-dir>/plots.")
+    parser.add_argument("--render-dir", type=str, default=None,
+                         help="Default: <output-dir>/render.")
+    
     return parser.parse_args()
 
 
@@ -156,7 +257,11 @@ def main():
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    # np.savez_compressed does not create parent dirs -- without this a fresh
+    # --output-dir fails at the very end of a video, after all the work.
+    (output_dir / "raw_npz").mkdir(parents=True, exist_ok=True)
     plots_dir = Path(args.plots_dir) if args.plots_dir else output_dir / "plots"
+    render_dir = Path(args.render_dir) if args.render_dir else output_dir / "render"
 
     video_dir = Path(args.video_dir)
     video_paths = sorted(
@@ -200,9 +305,20 @@ def main():
 
     for video_path in video_paths:
         stem = video_path.stem
-        out_path = output_dir / f"{stem}.npz"
+
+        if stem not in VIDEO_NAME_LIST:
+            continue
+
+
+        out_path = output_dir / "raw_npz" / f"{stem}.npz"
         print(f"\n=== {video_path.name} -> {out_path} ===")
 
+        # PASS 1 -- track everyone, decide who the subject is, before any
+        # lifting happens. Caches the target's 2D keypoints per frame, so the
+        # lifting pass below re-decodes the video but does NOT re-run YOLO.
+        _target_id, target_keypoints = resolve_target_track(yolo, video_path, args)
+
+        # PASS 2 -- lift/filter/render the target track only.
         cap = cv2.VideoCapture(str(video_path))
         if not cap.isOpened():
             print(f"  WARNING: could not open {video_path}, skipping.")
@@ -215,7 +331,7 @@ def main():
 
         writer = None
         if renderer_3d is not None:
-            render_path = output_dir / f"{stem}_render.mp4"
+            render_path = render_dir / f"{stem}_render.mp4"
             panel_w, panel_h = args.panel_size
             fourcc = cv2.VideoWriter_fourcc(*"mp4v")
             writer = cv2.VideoWriter(str(render_path), fourcc, fps, (panel_w * 2, panel_h))
@@ -230,7 +346,10 @@ def main():
                 break
             h, w = frame.shape[:2]
 
-            keypoints_2d, keypoints_conf = run_yolo_2d(yolo, frame, imgsz=args.yolo_imgsz)
+            # Target already resolved in pass 1; frames where that track has
+            # no detection (occluded / out of frame) come back as None and
+            # are handled by KeypointOutlierHoldFilter exactly as before.
+            keypoints_2d, keypoints_conf = target_keypoints.get(frame_idx, (None, None))
             if kp_filter is not None:
                 keypoints_2d, keypoints_conf, _status = kp_filter.filter(keypoints_2d, keypoints_conf)
 

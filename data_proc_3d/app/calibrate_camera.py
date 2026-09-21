@@ -56,7 +56,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from camera_utils.intrinsic_calibration import run_intrinsic_calibration
+from camera_utils.intrinsic_calibration import DISTORTION_MODELS, run_intrinsic_calibration
+from camera_utils.video_source import add_capture_args
 from camera_utils.extrinsic_calibration import (
     run_extrinsic_calibration, run_extrinsic_calibration_marker,
 )
@@ -70,6 +71,14 @@ DEFAULT_INTRINSICS_PATH = CALIB_DATA_DIR / "intrinsics.json"
 DEFAULT_EXTRINSICS_PATH = CALIB_DATA_DIR / "extrinsics.json"
 DEFAULT_IPHONE_INTRINSICS_PATH = CALIB_DATA_DIR / "iphone_intrinsics.json"
 DEFAULT_IPHONE_EXTRINSICS_PATH = CALIB_DATA_DIR / "iphone_extrinsics.json"
+
+
+def add_distortion_arg(parser):
+    parser.add_argument("--distortion-model", choices=sorted(DISTORTION_MODELS), default="full",
+                         help="Which distortion terms to fit. 'full' = OpenCV's default "
+                              "(k1 k2 p1 p2 k3). Use 'stable' (k1 k2 only) if the fit "
+                              "produces huge alternating coefficients -- see "
+                              "camera_utils/intrinsic_calibration.py's DISTORTION_MODELS.")
 
 
 def add_board_args(parser, required=True):
@@ -92,7 +101,9 @@ def add_intrinsic_args(parser):
                          help="Folder of ChArUco board images (jpg/png). If omitted, "
                               "captures live from --camera-index instead.")
     parser.add_argument("--camera-index", type=int, default=0)
+    add_capture_args(parser)
     add_board_args(parser)
+    add_distortion_arg(parser)
     parser.add_argument("--output", type=str, default=DEFAULT_INTRINSICS_PATH,
                          help=f"Where to write intrinsics.json (default: {DEFAULT_INTRINSICS_PATH}).")
 
@@ -106,6 +117,7 @@ def add_extrinsic_args(parser):
     parser.add_argument("--image", type=str, default=None,
                          help="Single still image to calibrate from instead of live capture.")
     parser.add_argument("--camera-index", type=int, default=0)
+    add_capture_args(parser)
     add_board_args(parser, required=False)
     parser.add_argument("--marker-id", type=int, default=None,
                          help="--method marker only. Expected marker id. If omitted, uses the "
@@ -184,7 +196,9 @@ def do_intrinsic(args):
     run_intrinsic_calibration(
         args.images_dir, args.camera_index, args.squares_x, args.squares_y,
         args.square_length_mm, args.marker_length_mm, args.aruco_dict,
-        args.min_corners, args.output)
+        args.min_corners, args.output, capture_width=args.capture_width,
+        capture_height=args.capture_height, backend=args.backend,
+        distortion_model=args.distortion_model)
 
 
 def do_extrinsic(args):
@@ -196,12 +210,15 @@ def do_extrinsic(args):
             args.intrinsics, args.image, args.camera_index, args.squares_x, args.squares_y,
             args.square_length_mm, args.marker_length_mm, args.aruco_dict, args.min_corners,
             args.board_xyz, args.board_rpy_deg, args.robot_base_xyz, args.robot_base_rpy_deg,
-            args.ground_z, args.output)
+            args.ground_z, args.output, capture_width=args.capture_width,
+            capture_height=args.capture_height, backend=args.backend)
     else:
         run_extrinsic_calibration_marker(
             args.intrinsics, args.image, args.camera_index, args.marker_id,
             args.marker_length_mm, args.aruco_dict, args.board_xyz, args.board_rpy_deg,
-            args.robot_base_xyz, args.robot_base_rpy_deg, args.ground_z, args.output)
+            args.robot_base_xyz, args.robot_base_rpy_deg, args.ground_z, args.output,
+            capture_width=args.capture_width, capture_height=args.capture_height,
+            backend=args.backend)
 
 
 def do_full(args):
@@ -209,7 +226,9 @@ def do_full(args):
     run_intrinsic_calibration(
         args.images_dir, args.camera_index, args.squares_x, args.squares_y,
         args.square_length_mm, args.marker_length_mm, args.aruco_dict,
-        args.min_corners, args.intrinsics_output)
+        args.min_corners, args.intrinsics_output, capture_width=args.capture_width,
+        capture_height=args.capture_height, backend=args.backend,
+        distortion_model=args.distortion_model)
 
     print("\n=== Step 2/2: extrinsic calibration ===")
     if args.images_dir:
@@ -220,12 +239,15 @@ def do_full(args):
             args.intrinsics_output, args.image, args.camera_index, args.squares_x, args.squares_y,
             args.square_length_mm, args.marker_length_mm, args.aruco_dict, args.min_corners,
             args.board_xyz, args.board_rpy_deg, args.robot_base_xyz, args.robot_base_rpy_deg,
-            args.ground_z, args.extrinsics_output)
+            args.ground_z, args.extrinsics_output, capture_width=args.capture_width,
+            capture_height=args.capture_height, backend=args.backend)
     else:
         run_extrinsic_calibration_marker(
             args.intrinsics_output, args.image, args.camera_index, args.marker_id,
             args.marker_length_mm, args.aruco_dict, args.board_xyz, args.board_rpy_deg,
-            args.robot_base_xyz, args.robot_base_rpy_deg, args.ground_z, args.extrinsics_output)
+            args.robot_base_xyz, args.robot_base_rpy_deg, args.ground_z, args.extrinsics_output,
+            capture_width=args.capture_width, capture_height=args.capture_height,
+            backend=args.backend)
 
 
 def do_iphone_intrinsic(args):
@@ -296,6 +318,8 @@ def main():
                          help="Folder of ChArUco board images for the intrinsic step. If "
                               "omitted, both steps capture live from --camera-index.")
     p_full.add_argument("--camera-index", type=int, default=0)
+    add_capture_args(p_full)
+    add_distortion_arg(p_full)
     p_full.add_argument("--image", type=str, default=None,
                          help="Single still image for the extrinsic step (instead of live capture).")
     p_full.add_argument("--method", type=str, choices=("board", "marker"), default="board",

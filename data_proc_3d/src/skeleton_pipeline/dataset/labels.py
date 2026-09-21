@@ -36,25 +36,126 @@ import pandas as pd
 from . import io_utils
 
 # Mirrors data_proc_2d/src/annotation_config.py's ANNOTATION_CONFIG values
-# (ELAN tier label -> step_id). The "- BL" (baseline?) variants 7-11 are
-# excluded from training, same as data_proc_2d/app/build_training_pairs.py's
-# EXCLUDE_STEPS.
+# (ELAN tier label -> step_id).
+#
+# "M - X" is a MISTAKE variant of step X: the subject performing that step
+# incorrectly. It is not a second person and not a separate activity, so each
+# one pairs with its correct counterpart ("M - Screw" <-> "Screw", "M - Lift
+# Main" <-> "Lifting Main", and so on; "Pull the Cables - 2" has no variant).
+#
+# The ids are NOT contiguous by theme, and 6 sorts away from the other
+# "Pull the Cables", so read this dict rather than assuming ranges.
+#
+# (An older data_proc_2d taxonomy had "- BL" (body language) variants at ids
+# 7-11 which this file's comment used to say were excluded. Those tiers are
+# no longer annotated and no longer appear above; ids 7-11 are now Lifting
+# Main and four mistake variants, and they are NOT excluded. EXCLUDE_STEPS
+# below drops only "T Pose" (15), the calibration pose.)
 ANNOTATION_STEP_IDS = {
-    "Place Spacer": 0,
-    "Move Spacer": 1,
-    "Remove spacer": 2,
-    "Align the Piece": 3,
-    "Place the Piece": 4,
-    "Screw": 5,
-    "Mistake": 6,
-    "Place Spacer - BL": 7,
-    "Remove Spacer - BL": 8,
-    "Align - BL": 9,
-    "Place the Piece - BL": 10,
-    "Screw - BL": 11,
+    "Pull the Cables - 1": 0,
+    "Pull the Cables - 2": 6,
+     "Lift": 1,
+     "Align": 2,
+     "Screw": 3,
+     "Connect Cables": 4,
+     "Clamping": 5,
+     "Lifting Main": 7,
+     "M - Pull the Cables": 8,
+     "M - Lift": 9,
+     "M - Align": 10,
+     "M - Screw": 11,
+     "M - Connect Cables": 12,
+     "M - Lift Main": 13,
+     "M - Clamping": 14,
+     "T Pose": 15,
 }
-EXCLUDE_STEPS = [step_id for step_id in ANNOTATION_STEP_IDS.values() if step_id >= 7]
+EXCLUDE_STEPS = [step_id for step_id in ANNOTATION_STEP_IDS.values() if step_id >= 15]
 ACTIVE_LABEL_IDS = sorted(set(ANNOTATION_STEP_IDS.values()) - set(EXCLUDE_STEPS))
+
+# The model's actual output taxonomy, collapsing the annotation tiers above.
+# {output_id: {name: [annotation step_ids that map to it]}}.
+#
+# Two heads, not one: entries 0-6 are the mutually exclusive TASK classes, and
+# the last entry is the separate binary MISTAKE flag. A mistake is not a class
+# of its own -- "M - Screw" is still the Screw task, done wrong -- so each M-
+# tier appears twice here: once under its task, once under Mistake. That is why
+# the flag needs its own output rather than an eighth class: predicting "Screw"
+# and "this is a mistake" are different questions about the same frame.
+LABEL_MAP_DICT = {
+    0: {"Pull Cables": [0, 6, 8]},
+    1: {"Lift": [1, 9]},
+    2: {"Align": [2, 10]},
+    3: {"Screw": [3, 11]},
+    4: {"Connect Cables": [4, 12]},
+    5: {"Clamp Coupling": [5, 14]},
+    6: {"Place": [7, 13]},
+    7: {"Mistake": [8, 9, 10, 11, 12, 13, 14]}
+}
+MISTAKE_ENTRY_NAME = "Mistake"
+
+
+def _unpack_label_map(label_map: dict) -> tuple[dict, dict, set]:
+    """LABEL_MAP_DICT -> ({task_id: name}, {step_id: task_id}, {mistake step_ids})."""
+    task_names, step_to_task, mistake_step_ids = {}, {}, set()
+    for output_id, entry in label_map.items():
+        (name, step_ids), = entry.items()
+        if name == MISTAKE_ENTRY_NAME:
+            mistake_step_ids = set(step_ids)
+            continue
+        task_names[output_id] = name
+        for step_id in step_ids:
+            step_to_task[step_id] = output_id
+    return task_names, step_to_task, mistake_step_ids
+
+
+TASK_NAMES, STEP_TO_TASK, MISTAKE_STEP_IDS = _unpack_label_map(LABEL_MAP_DICT)
+TASK_IDS = sorted(TASK_NAMES)
+
+# Every annotated step the pipeline keeps must land in a task, or its frames
+# would silently train as "no task" while still carrying real motion.
+_UNMAPPED_STEPS = sorted(set(ACTIVE_LABEL_IDS) - set(STEP_TO_TASK))
+if _UNMAPPED_STEPS:
+    raise ValueError(
+        f"LABEL_MAP_DICT does not map annotation step id(s) {_UNMAPPED_STEPS}; "
+        f"every id in ACTIVE_LABEL_IDS ({ACTIVE_LABEL_IDS}) needs a task.")
+
+
+
+def to_task_entries(label_entries: list[dict], exclude_steps: list | None = None) -> list[dict]:
+    """Annotation entries -> model-output entries, via LABEL_MAP_DICT.
+
+    Each returned entry gains "task_id" (the collapsed class), "is_mistake",
+    and "mistake_id" (0 for mistakes, absent otherwise -- the single column of
+    the binary mistake matrix).
+
+    Mistake spans also get their progress REVERSED, 100 -> 0, where a correct
+    span runs 0 -> 100. A mistake undoes work rather than advancing it, so
+    within one (task, piece) the curve falls back while the error is being made
+    and climbs again over the redo. Both land on the same task column, which is
+    the point of folding "M - Screw" into "Screw": the progress signal for a
+    piece stays continuous across the mistake instead of splitting into two
+    unrelated classes.
+    """
+    exclude_steps = EXCLUDE_STEPS if exclude_steps is None else exclude_steps
+    task_entries = []
+    for entry in label_entries:
+        step_id = entry.get("step_id")
+        if step_id is None or step_id in exclude_steps:
+            continue
+        task_id = STEP_TO_TASK.get(int(step_id))
+        if task_id is None:
+            continue
+
+        is_mistake = int(step_id) in MISTAKE_STEP_IDS
+        task_entry = dict(entry)
+        task_entry["task_id"] = task_id
+        task_entry["is_mistake"] = is_mistake
+        if is_mistake:
+            task_entry["mistake_id"] = 0
+            task_entry["start_progress"] = float(entry.get("end_progress", 100.0))
+            task_entry["end_progress"] = float(entry.get("start_progress", 0.0))
+        task_entries.append(task_entry)
+    return task_entries
 
 
 @dataclass
@@ -76,62 +177,93 @@ def extract_labels(
     label_config: LabelConfiguration = DEFAULT_LABEL_CONFIG,
     exclude_steps: list | None = None,
 ) -> dict:
-    """Builds the same label set data_proc_2d/app/build_training_pairs.py's
-    _extract_labels() did, from label__{take_id}.json / label_detail__{take_id}.json
-    under *annotations_dir* (take_id e.g. "cam-04_uid-01_take-01"). Returns a
-    dict of torch tensors: step_id/status_id(_plateau)(_prob), task_progress,
-    and their (T, len(ACTIVE_LABEL_IDS)) *_vector soft-label forms."""
+    """Per-frame label tensors from label__{take_id}.json under
+    *annotations_dir* (take_id e.g. "uid-01_take-01").
+
+    Returns (labels, debug_frames). The model's three targets are:
+
+      task_id        (T,)  int64, one of TASK_IDS -- LABEL_MAP_DICT's classes
+      mistake        (T,)  int64 0/1, the separate binary flag
+      task_progress  (T,)  float 0-100 within the frame's task, counting DOWN
+                           across a mistake (see to_task_entries)
+
+    each with a soft *_prob companion and, for task_id, a
+    (T, len(TASK_IDS)) *_vector of per-class scores for soft-label training.
+    The *_plateau variants score a flat 1.0 across the whole annotated span
+    rather than peaking at its midpoint. The raw step_id* tensors (the 15
+    un-collapsed annotation tiers) come along for debugging and plots; they are
+    not model outputs."""
     import torch
 
     exclude_steps = EXCLUDE_STEPS if exclude_steps is None else exclude_steps
 
     step_id_data = io_utils.load_json(annotations_dir / f"label__{take_id}.json", logger)
-    status_id_data = io_utils.load_json(annotations_dir / f"label_detail__{take_id}.json", logger)
     frame_index = pd.RangeIndex(frame_size)
     step_labels = step_id_data.get("labels", []) if step_id_data else []
-    status_labels = status_id_data.get("labels", []) if status_id_data else []
+
+    task_labels = to_task_entries(step_labels, exclude_steps)
+    mistake_labels = [entry for entry in task_labels if entry["is_mistake"]]
 
     label_db = pd.DataFrame(index=frame_index)
     step_id_db, step_id_plateau_db = _build_label_variants(
         step_labels, frame_size, frame_index, label_config, exclude_steps)
-    status_id_db, status_id_plateau_db = _build_label_variants(
-        status_labels, frame_size, frame_index, label_config, exclude_steps)
-    task_progress_db = _build_progress_matrix(status_labels, frame_size, frame_index, exclude_steps)
+    task_id_db, task_id_plateau_db = _build_label_variants(
+        task_labels, frame_size, frame_index, label_config, exclude_steps,
+        label_key="task_id", columns=TASK_IDS)
+    mistake_db, mistake_plateau_db = _build_label_variants(
+        mistake_labels, frame_size, frame_index, label_config, exclude_steps,
+        label_key="mistake_id", columns=[0])
+    task_progress_db = _build_progress_matrix(
+        task_labels, frame_size, frame_index, exclude_steps,
+        label_key="task_id", columns=TASK_IDS)
 
     label_db["step_id"] = _highest_value_label_per_frame(step_id_db, frame_index)
     label_db["step_id_prob"] = _highest_value_value_per_frame(step_id_db, frame_index)
     label_db["step_id_plateau"] = _highest_value_label_per_frame(step_id_plateau_db, frame_index)
     label_db["step_id_plateau_prob"] = _highest_value_value_per_frame(step_id_plateau_db, frame_index)
 
-    label_db["status_id"] = _highest_value_label_per_frame(status_id_db, frame_index)
-    label_db["status_id_prob"] = _highest_value_value_per_frame(status_id_db, frame_index)
-    label_db["status_id_plateau"] = _highest_value_label_per_frame(status_id_plateau_db, frame_index)
-    label_db["status_id_plateau_prob"] = _highest_value_value_per_frame(status_id_plateau_db, frame_index)
-    label_db["task_progress"] = _highest_value_value_per_frame(task_progress_db, frame_index)
+    label_db["task_id"] = _highest_value_label_per_frame(task_id_db, frame_index)
+    label_db["task_id_prob"] = _highest_value_value_per_frame(task_id_db, frame_index)
+    label_db["task_id_plateau"] = _highest_value_label_per_frame(task_id_plateau_db, frame_index)
+    label_db["task_id_plateau_prob"] = _highest_value_value_per_frame(task_id_plateau_db, frame_index)
+
+    label_db["mistake_prob"] = mistake_db[0]
+    label_db["mistake"] = (mistake_plateau_db[0] >= 0.5).astype(np.int64)
+
+    # Progress of the task that task_id names for that frame, NOT the largest
+    # progress over all tasks: 21.5% of labelled frames have two steps annotated
+    # at once (Lift + Lifting Main, Lift + Align, ...), and taking the max there
+    # reports a concurrent task's near-100% while the selected one has barely
+    # started.
+    label_db["task_progress"] = _value_at_selected_label(
+        task_progress_db, label_db["task_id"], frame_index)
 
     labels = {
+        # --- model outputs ---------------------------------------------------
+        "task_id": torch.from_numpy(label_db["task_id"].values.astype(np.int64)),
+        "task_id_prob": torch.from_numpy(label_db["task_id_prob"].values.astype(np.float32)),
+        "task_id_vector": torch.from_numpy(task_id_db.values.astype(np.float32)),
+        "mistake": torch.from_numpy(label_db["mistake"].values.astype(np.int64)),
+        "mistake_prob": torch.from_numpy(label_db["mistake_prob"].values.astype(np.float32)),
+        "task_progress": torch.from_numpy(label_db["task_progress"].values.astype(np.float32)),
+        "task_progress_vector": torch.from_numpy(task_progress_db.values.astype(np.float32)),
+        "task_id_plateau": torch.from_numpy(label_db["task_id_plateau"].values.astype(np.int64)),
+        "task_id_plateau_prob": torch.from_numpy(label_db["task_id_plateau_prob"].values.astype(np.float32)),
+        "task_id_plateau_vector": torch.from_numpy(task_id_plateau_db.values.astype(np.float32)),
+        # --- raw annotation tiers, kept for debugging/plots ------------------
         "step_id": torch.from_numpy(label_db["step_id"].values.astype(np.int64)),
         "step_id_prob": torch.from_numpy(label_db["step_id_prob"].values.astype(np.float32)),
-        "status_id": torch.from_numpy(label_db["status_id"].values.astype(np.int64)),
-        "status_id_prob": torch.from_numpy(label_db["status_id_prob"].values.astype(np.float32)),
-        "task_progress": torch.from_numpy(label_db["task_progress"].values.astype(np.float32)),
         "step_id_plateau": torch.from_numpy(label_db["step_id_plateau"].values.astype(np.int64)),
         "step_id_plateau_prob": torch.from_numpy(label_db["step_id_plateau_prob"].values.astype(np.float32)),
-        "status_id_plateau": torch.from_numpy(label_db["status_id_plateau"].values.astype(np.int64)),
-        "status_id_plateau_prob": torch.from_numpy(label_db["status_id_plateau_prob"].values.astype(np.float32)),
         "step_id_vector": torch.from_numpy(step_id_db.values.astype(np.float32)),
-        "status_id_vector": torch.from_numpy(status_id_db.values.astype(np.float32)),
         "step_id_plateau_vector": torch.from_numpy(step_id_plateau_db.values.astype(np.float32)),
-        "status_id_plateau_vector": torch.from_numpy(status_id_plateau_db.values.astype(np.float32)),
-        "task_progress_vector": torch.from_numpy(task_progress_db.values.astype(np.float32)),
     }
 
     debug_frames = {
-        "step_id (asymmetric_peak)": step_id_db,
-        "step_id (plateau)": step_id_plateau_db,
-        "status_id (asymmetric_peak)": status_id_db,
-        "status_id (plateau)": status_id_plateau_db,
-        "task_progress": task_progress_db,
+        "task_id (asymmetric_peak)": task_id_db.rename(columns=TASK_NAMES),
+        "task_id (plateau)": task_id_plateau_db.rename(columns=TASK_NAMES),
+        "mistake": mistake_plateau_db.rename(columns={0: "mistake"}),
+        "task_progress": task_progress_db.rename(columns=TASK_NAMES),
     }
     return labels, debug_frames
 
@@ -214,79 +346,111 @@ def _accumulate_label_series(label_db: pd.DataFrame, label_name: int, label_valu
 
 
 def _build_label_variants(label_entries: list[dict], frame_size: int, frame_index: pd.RangeIndex,
-                           label_config: LabelConfiguration,
-                           exclude_steps: list | None) -> tuple[pd.DataFrame, pd.DataFrame]:
+                           label_config: LabelConfiguration, exclude_steps: list | None,
+                           label_key: str = "step_id",
+                           columns: list | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """(asymmetric_peak, plateau) score matrices. *label_key* names the entry
+    field that picks a column -- "step_id" for the raw annotation tiers,
+    "task_id" for the collapsed model classes -- and *columns* is the full
+    column set to force, so the matrix width never depends on which labels a
+    given take happens to contain."""
     return (
         _build_label_matrix(label_entries, frame_size, frame_index, label_config,
-                             smooth_type="asymmetric_peak", exclude_steps=exclude_steps),
+                             smooth_type="asymmetric_peak", exclude_steps=exclude_steps,
+                             label_key=label_key, columns=columns),
         _build_label_matrix(label_entries, frame_size, frame_index, label_config,
-                             smooth_type="plateau", exclude_steps=exclude_steps),
+                             smooth_type="plateau", exclude_steps=exclude_steps,
+                             label_key=label_key, columns=columns),
     )
 
 
 def _build_label_matrix(label_entries: list[dict], frame_size: int, frame_index: pd.RangeIndex,
                          label_config: LabelConfiguration, smooth_type: str,
-                         exclude_steps: list | None) -> pd.DataFrame:
+                         exclude_steps: list | None, label_key: str = "step_id",
+                         columns: list | None = None) -> pd.DataFrame:
     label_db = pd.DataFrame(index=frame_index)
     for label_info in label_entries:
-        step_id = label_info.get("step_id")
+        column = label_info.get(label_key)
         start_frame = label_info.get("start_frame")
         end_frame = label_info.get("end_frame")
-        if step_id is None or start_frame is None or end_frame is None:
+        if column is None or start_frame is None or end_frame is None:
             continue
-        if exclude_steps is not None and step_id in exclude_steps:
+        if exclude_steps is not None and label_info.get("step_id") in exclude_steps:
             continue
         label_db = _accumulate_label_series(
-            label_db, step_id,
+            label_db, column,
             _define_step_label_entry(frame_size, start_frame, end_frame,
                                       buffer=label_config.buffer, smooth_type=smooth_type),
             frame_index, max_value=1.0,
         )
-    return _ensure_db_columns(label_db, frame_index)
+    return _ensure_db_columns(label_db, frame_index, columns)
 
 
 def _build_progress_matrix(label_entries: list[dict], frame_size: int, frame_index: pd.RangeIndex,
-                            exclude_steps: list | None) -> pd.DataFrame:
+                            exclude_steps: list | None, label_key: str = "step_id",
+                            columns: list | None = None) -> pd.DataFrame:
     progress_db = pd.DataFrame(index=frame_index)
     grouped_entries: dict[tuple[int, int | None], list[dict]] = {}
     for label_info in label_entries:
-        step_id = label_info.get("step_id")
+        column = label_info.get(label_key)
         piece_id = label_info.get("piece_id")
         start_frame = label_info.get("start_frame")
         end_frame = label_info.get("end_frame")
-        if step_id is None or start_frame is None or end_frame is None:
+        if column is None or start_frame is None or end_frame is None:
             continue
-        if exclude_steps is not None and step_id in exclude_steps:
+        if exclude_steps is not None and label_info.get("step_id") in exclude_steps:
             continue
-        group_key = (int(step_id), None if piece_id is None else int(piece_id))
+        group_key = (int(column), None if piece_id is None else int(piece_id))
         grouped_entries.setdefault(group_key, []).append(label_info)
 
-    for (step_id, _piece_id), group_entries in grouped_entries.items():
+    for (column, _piece_id), group_entries in grouped_entries.items():
+        # Groups sharing a column land on the same curve. Their spans are
+        # disjoint apart from a handful of annotations whose end frame is the
+        # next one's start frame, so clip rather than let those single frames
+        # sum past a full 100%.
         progress_db = _accumulate_label_series(
-            progress_db, step_id,
+            progress_db, column,
             _build_progress_series_for_piece_group(group_entries, frame_size, frame_index),
-            frame_index,
+            frame_index, max_value=100.0,
         )
-    return _ensure_db_columns(progress_db, frame_index)
+    return _ensure_db_columns(progress_db, frame_index, columns)
 
 
 def _build_progress_series_for_piece_group(label_entries: list[dict], frame_size: int,
                                             frame_index: pd.RangeIndex) -> pd.Series:
-    """One progress series that carries the last progress through gaps
-    between consecutive entries of the same (step_id, piece_id) -- e.g.
-    label_detail's split "0-50% then 51-100%" entries for one piece."""
+    """One progress series for all entries sharing a (step_id, piece_id).
+
+    Each entry ramps start_progress -> end_progress across its own frames and
+    the series is 0 outside every entry, so with proc_annotations.py's default
+    --progress-mode per-label -- where every annotation carries a full 0..100 --
+    each labelled span rises 0% -> 100% on its own and resets between spans.
+
+    The carry-forward below only engages when an entry stops short of 100,
+    which is what --progress-mode per-group produces: repeats of one
+    (step_id, piece_id) split a single 0..100 range, and the progress reached
+    so far must hold through the gaps between them instead of dropping to 0.
+
+    Mistake entries are applied last, OVERWRITING their own frames rather than
+    queueing after the entries already placed. A mistake is usually annotated
+    INSIDE the span of the task it spoils -- "M - Lift" 26.5-43.6s sits within
+    "Lift" 9.7-66.8s -- and the sequential pass treats each entry as following
+    the previous one, so a nested entry's effective start is pushed past its own
+    end and it is dropped. Overwriting is also the right semantics: during the
+    mistake the task is being undone, whatever the enclosing span said.
+    """
     progress_series = pd.Series(0.0, index=frame_index, dtype=float)
     previous_end_frame: int | None = None
     previous_end_progress = 0.0
 
+    def sort_key(entry):
+        return (float(entry.get("start_frame", 0.0)),
+                float(entry.get("end_frame", 0.0)),
+                float(entry.get("timestamp", 0.0)))
+
     ordered_entries = sorted(
-        label_entries,
-        key=lambda entry: (
-            float(entry.get("start_frame", 0.0)),
-            float(entry.get("end_frame", 0.0)),
-            float(entry.get("timestamp", 0.0)),
-        ),
-    )
+        (e for e in label_entries if not e.get("is_mistake")), key=sort_key)
+    mistake_entries = sorted(
+        (e for e in label_entries if e.get("is_mistake")), key=sort_key)
 
     for label_info in ordered_entries:
         start_frame = int(round(float(label_info["start_frame"])))
@@ -313,19 +477,51 @@ def _build_progress_series_for_piece_group(label_entries: list[dict], frame_size
         previous_end_frame = end_frame
         previous_end_progress = end_progress
 
+    for label_info in mistake_entries:
+        start_frame = int(round(float(label_info["start_frame"])))
+        end_frame = int(round(float(label_info["end_frame"])))
+        if start_frame > end_frame:
+            continue
+        segment_series = _cal_status_progress(
+            frame_size, start_frame, end_frame,
+            float(label_info.get("start_progress", 100.0)),
+            float(label_info.get("end_progress", 0.0)))
+        progress_series.loc[start_frame:end_frame] = segment_series.loc[start_frame:end_frame]
+
     return progress_series
 
 
-def _ensure_db_columns(label_db: pd.DataFrame, frame_index: pd.RangeIndex) -> pd.DataFrame:
-    """Forces a stable set of label columns so vectors are always
-    (num_frames, len(ACTIVE_LABEL_IDS))."""
-    return label_db.reindex(index=frame_index, columns=ACTIVE_LABEL_IDS, fill_value=0.0)
+def _ensure_db_columns(label_db: pd.DataFrame, frame_index: pd.RangeIndex,
+                        columns: list | None = None) -> pd.DataFrame:
+    """Forces a stable set of label columns so a take's vectors always have the
+    same width, whichever labels it happens to contain."""
+    columns = ACTIVE_LABEL_IDS if columns is None else columns
+    return label_db.reindex(index=frame_index, columns=columns, fill_value=0.0)
 
 
 def _highest_value_label_per_frame(label_db: pd.DataFrame, frame_index: pd.RangeIndex) -> pd.Series:
     if label_db.empty:
         return pd.Series(-1, index=frame_index, dtype="int64")
     return label_db.idxmax(axis=1).astype(int)
+
+
+def _value_at_selected_label(value_db: pd.DataFrame, selected_labels: pd.Series,
+                              frame_index: pd.RangeIndex) -> pd.Series:
+    """Per frame, the value_db entry for the label named in *selected_labels*.
+
+    Used to read one step's progress out of the per-step progress matrix, so
+    the scalar follows the step the frame is classified as rather than whichever
+    step happens to be furthest along.
+    """
+    if value_db.empty:
+        return pd.Series(0.0, index=frame_index, dtype="float64")
+    column_position = {label: position for position, label in enumerate(value_db.columns)}
+    positions = selected_labels.map(column_position).to_numpy()
+    values = value_db.to_numpy()
+    picked = np.where(
+        pd.isna(positions), 0.0,
+        values[np.arange(len(values)), np.nan_to_num(positions, nan=0).astype(int)])
+    return pd.Series(picked, index=frame_index, dtype="float64")
 
 
 def _highest_value_value_per_frame(label_db: pd.DataFrame, frame_index: pd.RangeIndex) -> pd.Series:

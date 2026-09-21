@@ -21,6 +21,12 @@ dependencies = [
     "torch==2.1.0+cu121",
     "torchvision==0.16.0+cu121",
     "ultralytics>=8.0",
+    # Hungarian assignment used by ultralytics' multi-object trackers
+    # (BoT-SORT/ByteTrack), which the target-selection pass relies on --
+    # see skeleton_pipeline/person_tracking.py. ultralytics does NOT declare
+    # this itself; it AutoUpdate-installs it on first .track() call, which
+    # needs network access and silently mutates the venv, so pin it here.
+    "lap>=0.5.12",
     # MotionBERT (pure PyTorch, see skeleton_pipeline/motionbert_lifter.py)
     # -- only its lightweight, actually-needed-for-inference deps, same
     # subset as world_pose's own `motionbert` extra (data_proc_3d/src/
@@ -35,6 +41,14 @@ dependencies = [
     # (e.g. easydict/tensorboardX) still import at runtime -- pinned here
     # for the same reason world_pose's own pyproject.toml pins it.
     "setuptools<81",
+
+    # LZFSE decompression for iphone_lidar_test.py's offline .r3d file
+    # processing (depth/confidence frames are LZFSE-compressed, not zlib --
+    # see that script's module docstring). Source-dist only (compiles a
+    # small bundled C extension) but builds cleanly with a plain pip
+    # install on this project's Windows venvs -- unlike record3d below,
+    # this has nothing to do with live USB streaming.
+    "pyliblzfse>=0.4",
 ]
 
 # Deliberately NOT included (this is the whole point of this separate
@@ -43,8 +57,8 @@ dependencies = [
 # skeleton_pipeline/coco_h36m.py reimplements the one utility function
 # this pipeline actually needed from mmpose, so the whole stack is
 # avoidable here), tensorflow/tensorflow-hub (metrabs), record3d (iPhone
-# live capture -- this pipeline only reads existing video files), roslibpy,
-# depth_pro.
+# LIVE capture -- this pipeline only reads existing video/.r3d files),
+# roslibpy, depth_pro.
 
 [tool.uv.sources]
 torch = { index = "pytorch-cu121" }
@@ -59,3 +73,4 @@ explicit = true
 package = false
 environments = ["sys_platform == 'win32'"]
 override-dependencies = ["triton; sys_platform == 'linux'"]
+link-mode = "copy"

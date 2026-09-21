@@ -1,0 +1,39 @@
+{
+  "_README": [
+    "Hand-picked person-track ids per video, for generate_lstm_training_data.py's",
+    "--target-tracks flag. A video listed here skips automatic target selection AND",
+    "fragment linking entirely and uses exactly the ids given. Videos NOT listed here",
+    "are unaffected and still use the automatic path, so this file only needs entries",
+    "for clips the heuristic gets wrong.",
+    "",
+    "Track ids are NOT stable across runs: they come from the tracker and will change",
+    "if you change --tracker, --yolo-model, --yolo-imgsz or the YOLO weights. If you",
+    "change any of those, re-run review_tracks.py and rebuild these lists.",
+    "",
+    "To add a video:  uv run python review_tracks.py --video <path> --out-dir <dir> --device cuda:0",
+    "then read its contact sheet (each tile shows its own track green, everyone else",
+    "red) and keep only the ids that are your subject."
+  ],
+
+  "video__cam-07_uid-10_take-01": {
+    "note": [
+      "22.3 min. A second person (black t-shirt, light grey 'CZBA' tracksuit trousers)",
+      "enters at ~758s, takes over the task while the subject watches, and works until",
+      "~847s; the subject is off-frame ~816-828s. Verified visually from cropped",
+      "skeleton overlays:",
+      "  EXCLUDED as the second person: 418 (760s), 430 (763-847s), 462 (811s).",
+      "  id=462 was in the AUTOMATIC selection, so the automatic result for this video",
+      "  was contaminated with the second person -- that is why it is overridden here.",
+      "The subject wears a black top with dark wide-leg jeans throughout; ids 483-754",
+      "were each confirmed as her working with the drill.",
+      "Result: 98.0% of frames, 0.0-1336.5s, vs 60.6% automatic.",
+      "Remaining gaps >1s: 127-128s, 566-567s, 816-828s (subject genuinely absent),",
+      "990-992s."
+    ],
+    "target": [
+      1, 24, 34, 49, 54, 67, 69, 86, 95, 103, 109, 118, 178, 197, 219,
+      312, 315, 324, 332, 339, 342, 347, 357, 413, 424, 464, 473, 481,
+      483, 501, 510, 514, 535, 547, 563, 582, 632, 682, 695, 701, 748, 754
+    ]
+  }
+}

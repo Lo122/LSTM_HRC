@@ -26,8 +26,9 @@ Usage:
     python debug_visualize.py --npz results/video__cam-04_uid-01_take-01.npz             # inspect a real prior run
     python debug_visualize.py --npz results/video__cam-04_uid-01_take-01.npz --show      # + live preview window
     uv run python debug_visualize.py `
-      --npz "C:\\Users\\Owner\\OneDrive - Universität Stuttgart\\2025_26_Thesis\\codes\\LSTM_HRC\\data_proc_3d\\results\\video__cam-04_uid-01_take-01.npz" `
-        --source-video "G:\\My Drive\\University of Stuttgart\\ITECH_Thesis\\Videos\\raw\\cam-04\\video__cam-04_uid-01_take-01.mp4"
+      --npz "C:\\Users\\Owner\\OneDrive - Universität Stuttgart\\2025_26_Thesis\\codes\\LSTM_HRC\\data_proc_3d\\results\\raw\\video__cam-04_uid-01_take-01.npz" `
+        --source-video "G:\\.shortcut-targets-by-id\\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\\ITECH_Thesis\\Videos\\raw\\cam-04\\video__cam-04_uid-01_take-01.mp4" `
+        --show
     """
     
 import argparse

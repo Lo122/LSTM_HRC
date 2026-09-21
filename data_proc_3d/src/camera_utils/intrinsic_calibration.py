@@ -32,6 +32,7 @@ if __package__ in (None, ""):
 
 from camera_utils.calibration_io import save_intrinsics
 from camera_utils.charuco_board import detect_charuco, draw_charuco_detection, make_charuco_board
+from camera_utils.video_source import add_capture_args, open_camera
 
 
 def imread_unicode(path):
@@ -50,7 +51,57 @@ def imwrite_unicode(path, img):
     return ok
 
 
-def calibrate_from_images(image_paths, board, detector, min_corners=6):
+# Which distortion terms cv2.calibrateCamera is allowed to fit.
+#
+# The default OpenCV model (k1, k2, p1, p2, k3) has more freedom than a
+# typical phone camera needs, and freedom it cannot constrain is freedom it
+# will misuse: with no board corners out near the image edge, k2/k3 are
+# unconstrained there, so the optimizer drives them to large alternating
+# values that shave a little reprojection error off the well-sampled centre
+# and then explode under extrapolation. The result LOOKS better -- more
+# parameters always lower reprojection error -- while being far worse at
+# every radius the data did not cover.
+#
+# "stable" is the right default for a phone camera whose image has usually
+# already been software-corrected: two radial terms, no tangential.
+DISTORTION_MODELS = {
+    "full": 0,                                        # k1 k2 p1 p2 k3 (OpenCV default)
+    "stable": cv2.CALIB_FIX_K3 | cv2.CALIB_ZERO_TANGENT_DIST,   # k1 k2
+    "no-k3": cv2.CALIB_FIX_K3,                        # k1 k2 p1 p2
+    "no-tangential": cv2.CALIB_ZERO_TANGENT_DIST,     # k1 k2 k3
+    "k1-only": (cv2.CALIB_FIX_K2 | cv2.CALIB_FIX_K3
+                | cv2.CALIB_ZERO_TANGENT_DIST),
+    "none": (cv2.CALIB_FIX_K1 | cv2.CALIB_FIX_K2 | cv2.CALIB_FIX_K3
+             | cv2.CALIB_ZERO_TANGENT_DIST),          # pure pinhole
+}
+
+
+def report_distortion_sanity(K, dist, image_size):
+    """Warn when the fitted radial polynomial is implausible at the image
+    corner. A real lens changes radius by at most a few percent out there;
+    a large factor means the polynomial was extrapolated into a region the
+    board never covered, which is invisible in the reprojection error but
+    makes solvePnP jump around as a target moves off-centre."""
+    width, height = image_size
+    coeffs = np.asarray(dist, dtype=np.float64).ravel()
+    k1 = coeffs[0] if coeffs.size > 0 else 0.0
+    k2 = coeffs[1] if coeffs.size > 1 else 0.0
+    k3 = coeffs[4] if coeffs.size > 4 else 0.0
+
+    r = np.hypot((width / 2.0) / K[0, 0], (height / 2.0) / K[1, 1])
+    factor = 1.0 + k1 * r**2 + k2 * r**4 + k3 * r**6
+    print(f"Radial distortion factor at the image corner: {factor:.3f} "
+          f"({(factor - 1.0) * 100:+.0f}%)")
+    if abs(factor - 1.0) > 0.25:
+        print("  WARNING: that is far more than a real lens does. The fit almost "
+              "certainly overfitted k2/k3 in a region your board never reached.")
+        print("  Fix: recapture with the board pushed into all four frame corners, "
+              "and/or re-run with --distortion-model stable.")
+    return factor
+
+
+def calibrate_from_images(image_paths, board, detector, min_corners=6,
+                           distortion_model="full"):
     all_object_points, all_image_points = [], []
     image_size = None
     used, skipped = 0, 0
@@ -86,17 +137,22 @@ def calibrate_from_images(image_paths, board, detector, min_corners=6):
             f"varied views for a stable calibration ({skipped} images skipped)."
         )
 
-    print(f"Calibrating from {used} views ({skipped} skipped)...")
+    if distortion_model not in DISTORTION_MODELS:
+        raise ValueError(f"Unknown distortion model {distortion_model!r}; "
+                         f"expected one of {sorted(DISTORTION_MODELS)}.")
+
+    print(f"Calibrating from {used} views ({skipped} skipped), "
+          f"distortion model '{distortion_model}'...")
     reprojection_error, K, dist, _, _ = cv2.calibrateCamera(
-        all_object_points, all_image_points, image_size, None, None)
+        all_object_points, all_image_points, image_size, None, None,
+        flags=DISTORTION_MODELS[distortion_model])
 
     return K, dist, image_size, reprojection_error
 
 
-def capture_from_camera(camera_index, detector, min_corners=6):
-    cap = cv2.VideoCapture(camera_index)
-    if not cap.isOpened():
-        raise IOError(f"Could not open camera index {camera_index}")
+def capture_from_camera(camera_index, detector, min_corners=6,
+                         capture_width=None, capture_height=None, backend="auto"):
+    cap, _size = open_camera(camera_index, capture_width, capture_height, backend)
 
     print("Live capture: press SPACE to capture a frame when the ChArUco board "
           "is highlighted, ESC or Q to finish and calibrate.")
@@ -131,7 +187,9 @@ def capture_from_camera(camera_index, detector, min_corners=6):
 
 def run_intrinsic_calibration(images_dir, camera_index, squares_x, squares_y,
                                square_length_mm, marker_length_mm, aruco_dict,
-                               min_corners, output):
+                               min_corners, output, capture_width=None,
+                               capture_height=None, backend="auto",
+                               distortion_model="full"):
     """Shared entry point used by both this module's CLI and the
     calibrate_camera app. Returns (K, dist, image_size, reprojection_error)."""
     board, detector = make_charuco_board(
@@ -149,9 +207,12 @@ def run_intrinsic_calibration(images_dir, camera_index, squares_x, squares_y,
         if not image_paths:
             raise RuntimeError(f"No images found in {images_dir}")
         K, dist, image_size, err = calibrate_from_images(
-            image_paths, board, detector, min_corners=min_corners)
+            image_paths, board, detector, min_corners=min_corners,
+            distortion_model=distortion_model)
     else:
-        frames = capture_from_camera(camera_index, detector, min_corners=min_corners)
+        frames = capture_from_camera(
+            camera_index, detector, min_corners=min_corners,
+            capture_width=capture_width, capture_height=capture_height, backend=backend)
         if len(frames) < 5:
             raise RuntimeError(f"Only captured {len(frames)} frame(s); need at least ~5-10.")
         tmp_dir = Path(output).resolve().parent / "_capture_tmp"
@@ -162,11 +223,13 @@ def run_intrinsic_calibration(images_dir, camera_index, squares_x, squares_y,
             imwrite_unicode(p, frame)
             tmp_paths.append(p)
         K, dist, image_size, err = calibrate_from_images(
-            tmp_paths, board, detector, min_corners=min_corners)
+            tmp_paths, board, detector, min_corners=min_corners,
+            distortion_model=distortion_model)
 
     print(f"Reprojection error: {err:.4f} px")
     print(f"K =\n{K}")
     print(f"dist = {dist.ravel()}")
+    report_distortion_sanity(K, dist, image_size)
 
     save_intrinsics(output, K, dist, image_size, reprojection_error=err)
     print(f"Saved intrinsics to {output}")
@@ -191,6 +254,10 @@ def main():
     parser.add_argument("--aruco-dict", type=str, default="DICT_5X5_50")
     parser.add_argument("--min-corners", type=int, default=6,
                          help="Minimum ChArUco corners required to accept a view.")
+    parser.add_argument("--distortion-model", choices=sorted(DISTORTION_MODELS), default="full",
+                         help="Which distortion terms to fit. 'full' is OpenCV's default "
+                              "(k1 k2 p1 p2 k3); 'stable' (k1 k2 only) is far more robust "
+                              "when the board did not reach the frame corners.")
     parser.add_argument("--output", type=str, required=True,
                          help="Where to write the intrinsics JSON file.")
     args = parser.parse_args()
@@ -199,7 +266,7 @@ def main():
         run_intrinsic_calibration(
             args.images_dir, args.camera_index, args.squares_x, args.squares_y,
             args.square_length_mm, args.marker_length_mm, args.aruco_dict,
-            args.min_corners, args.output)
+            args.min_corners, args.output, distortion_model=args.distortion_model)
     except RuntimeError as e:
         print(e)
 

@@ -52,6 +52,7 @@ if __package__ in (None, ""):
 
 from camera_utils.calibration_io import load_intrinsics, save_extrinsics
 from camera_utils.charuco_board import detect_charuco, draw_charuco_detection, make_charuco_board
+from camera_utils.video_source import open_camera
 from camera_utils import transforms as tf
 
 
@@ -66,10 +67,9 @@ def solve_board_pose(charuco_corners, charuco_ids, board, K, dist, min_corners=6
     return tf.rvec_tvec_to_transform(rvec, tvec)
 
 
-def capture_board_pose_live(camera_index, detector, board, K, dist, min_corners):
-    cap = cv2.VideoCapture(camera_index)
-    if not cap.isOpened():
-        raise IOError(f"Could not open camera index {camera_index}")
+def capture_board_pose_live(camera_index, detector, board, K, dist, min_corners,
+                             capture_width=None, capture_height=None, backend="auto"):
+    cap, _size = open_camera(camera_index, capture_width, capture_height, backend)
 
     print("Live extrinsic calibration: press SPACE to accept the current board "
           "detection, ESC/Q to abort.")
@@ -142,10 +142,9 @@ def solve_marker_pose(corners_2d, marker_length_m, K, dist):
     return tf.rvec_tvec_to_transform(rvec, tvec)
 
 
-def capture_marker_pose_live(camera_index, detector, marker_id, marker_length_m, K, dist):
-    cap = cv2.VideoCapture(camera_index)
-    if not cap.isOpened():
-        raise IOError(f"Could not open camera index {camera_index}")
+def capture_marker_pose_live(camera_index, detector, marker_id, marker_length_m, K, dist,
+                              capture_width=None, capture_height=None, backend="auto"):
+    cap, _size = open_camera(camera_index, capture_width, capture_height, backend)
 
     print("Live extrinsic calibration: press SPACE to accept the current marker "
           "detection, ESC/Q to abort.")
@@ -183,7 +182,8 @@ def capture_marker_pose_live(camera_index, detector, marker_id, marker_length_m,
 def run_extrinsic_calibration(intrinsics_path, image, camera_index, squares_x, squares_y,
                                square_length_mm, marker_length_mm, aruco_dict, min_corners,
                                board_xyz, board_rpy_deg, robot_base_xyz, robot_base_rpy_deg,
-                               ground_z, output):
+                               ground_z, output, capture_width=None,
+                               capture_height=None, backend="auto"):
     """Shared entry point used by both this module's CLI and the
     calibrate_camera app. Returns T_world_from_camera, or None on failure."""
     K, dist, _ = load_intrinsics(intrinsics_path)
@@ -206,7 +206,8 @@ def run_extrinsic_calibration(intrinsics_path, image, camera_index, squares_x, s
             charuco_corners, charuco_ids, board, K, dist, min_corners=min_corners)
     else:
         T_camera_from_board = capture_board_pose_live(
-            camera_index, detector, board, K, dist, min_corners)
+            camera_index, detector, board, K, dist, min_corners,
+            capture_width=capture_width, capture_height=capture_height, backend=backend)
 
     if T_camera_from_board is None:
         print("Failed to solve board pose. Aborting.")
@@ -238,7 +239,8 @@ def run_extrinsic_calibration(intrinsics_path, image, camera_index, squares_x, s
 
 def run_extrinsic_calibration_marker(intrinsics_path, image, camera_index, marker_id,
                                       marker_length_mm, aruco_dict, board_xyz, board_rpy_deg,
-                                      robot_base_xyz, robot_base_rpy_deg, ground_z, output):
+                                      robot_base_xyz, robot_base_rpy_deg, ground_z, output,
+                                      capture_width=None, capture_height=None, backend="auto"):
     """Marker variant of run_extrinsic_calibration -- solves against a single
     plain ArUco marker (generate_calibration_targets.py) instead of a
     ChArUco board. Returns T_world_from_camera, or None on failure."""
@@ -258,7 +260,8 @@ def run_extrinsic_calibration_marker(intrinsics_path, image, camera_index, marke
         T_camera_from_marker = solve_marker_pose(corners_2d, marker_length_m, K, dist)
     else:
         T_camera_from_marker = capture_marker_pose_live(
-            camera_index, detector, marker_id, marker_length_m, K, dist)
+            camera_index, detector, marker_id, marker_length_m, K, dist,
+            capture_width=capture_width, capture_height=capture_height, backend=backend)
 
     if T_camera_from_marker is None:
         print("Failed to solve marker pose. Aborting.")

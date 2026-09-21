@@ -4,9 +4,15 @@ skeleton_pipeline.features.h36m_features.compute_all_features -- not to the
 already-derived features, and not to the (frame-index-only) labels, which
 neither depend on nor need re-deriving from either transform.
 
-Two independent transforms, both operating "based on the origin" (pelvis,
+Three independent transforms, all operating "based on the origin" (pelvis,
 joint 0, which is exactly (0, 0, 0) at every frame by this project's
 root-relative convention -- see motionbert_lifter.py):
+
+  - mirror_positions(): reflection in the sagittal plane -- negate x AND swap
+    the left/right joint pairs. A reflection is not in the rotation group, so
+    this is the one transform rotate_positions() cannot produce no matter what
+    angle it draws, which is why it is the cheapest first augmentation to add.
+    See mirror_positions' own docstring for why the index swap is not optional.
 
   - rotate_positions(): ONE random rigid rotation about the origin, shared
     across every frame and every joint of a clip. This must be a SINGLE
@@ -33,9 +39,9 @@ root-relative convention -- see motionbert_lifter.py):
     measurement, so "noise" on it isn't meaningful the way it is for every
     other (relative-to-root) joint.
 
-augment_positions() composes both (rotate first, then add noise -- for
-isotropic Gaussian noise the order doesn't change the resulting
-distribution, but rotating clean data first keeps the noise sigma
+augment_positions() composes all three (mirror, then rotate, then add noise --
+for isotropic Gaussian noise the order doesn't change the resulting
+distribution, but transforming clean data first keeps the noise sigma
 interpretable directly in meters regardless of the random rotation drawn).
 """
 from dataclasses import dataclass, field
@@ -44,9 +50,19 @@ import numpy as np
 
 PELVIS = 0
 
+# Left/right joint pairs in this project's H36M order -- keep in sync with
+# skeleton_pipeline/features/h36m_features.py's H36M_JOINT_NAMES:
+#   0 pelvis, 1 r_hip, 2 r_knee, 3 r_ankle, 4 l_hip, 5 l_knee, 6 l_ankle,
+#   7 spine, 8 thorax, 9 neck, 10 head,
+#   11 l_shoulder, 12 l_elbow, 13 l_wrist, 14 r_shoulder, 15 r_elbow, 16 r_wrist
+# The unpaired joints (pelvis, spine, thorax, neck, head) lie on the midline
+# and only need their x negated.
+MIRROR_JOINT_PAIRS = ((1, 4), (2, 5), (3, 6), (11, 14), (12, 15), (13, 16))
+
 
 @dataclass
 class AugmentationConfig:
+    mirror: bool = False                          # opt-in: see mirror_positions on when it is valid
     rotate: bool = True
     rotation_axis: str = "z"                     # "z" (yaw/vertical, default), "x", "y", or "xyz" (full random 3D)
     rotation_range_deg: tuple[float, float] = (0.0, 360.0)
@@ -54,6 +70,76 @@ class AugmentationConfig:
     noise_sigma_m: float = 0.01                   # per-joint per-frame position jitter, meters (1 cm default)
     noise_exclude_joints: tuple[int, ...] = (PELVIS,)
     seed: int | None = None
+
+
+def mirror_positions(positions: np.ndarray,
+                      joint_pairs: tuple[tuple[int, int], ...] = MIRROR_JOINT_PAIRS) -> np.ndarray:
+    """positions: (T, 17, 3) -> the same motion performed left-right reflected.
+
+    TWO steps, and the second is not optional: negate x, AND swap the left and
+    right joint indices. Negating x alone reflects the skeleton in space but
+    leaves each joint in its original slot, so what was the right elbow now sits
+    at a left-elbow position while still being READ as the right elbow. Every
+    left/right feature then reports inverted, and the bone tree connects
+    l_shoulder to what is geometrically a right arm -- an anatomically
+    impossible body that trains the model on poses no person can adopt.
+    Swapping the pairs restores a valid skeleton that happens to be mirrored.
+
+    Applies to raw positions only, like every transform here: the derived
+    features must be recomputed afterwards, not mirrored themselves.
+
+    A reflection, unlike rotate_positions', is orientation-REVERSING, so it is
+    genuinely new data rather than something a yaw angle could have produced.
+    It leaves the labels alone (a task id says nothing about handedness) and
+    preserves every bone length and joint angle, so no bone-length constraint is
+    violated.
+
+    WHEN IT IS VALID: only where handedness is a nuisance rather than part of
+    the task. If every subject is right-handed and deployment is right-handed
+    too, mirroring manufactures left-handed executions that never occur at test
+    time -- usually still a useful regulariser, but the reason this is opt-in
+    (AugmentationConfig.mirror defaults to False) and worth measuring against a
+    no-augmentation baseline rather than assuming.
+
+    Deterministic: there is exactly one reflection, so unlike the rotation and
+    noise draws there is nothing random to seed. Callers wanting a mixed set
+    should mirror some copies and not others.
+    """
+    mirrored = np.asarray(positions, dtype=np.float64).copy()
+    mirrored[..., 0] *= -1.0
+
+    left = [a for a, _ in joint_pairs]
+    right = [b for _, b in joint_pairs]
+    mirrored[:, left + right, :] = mirrored[:, right + left, :]
+    return mirrored
+
+
+def mirror_bone_length_targets(targets, edges,
+                                joint_pairs: tuple[tuple[int, int], ...] = MIRROR_JOINT_PAIRS):
+    """Reorder per-edge bone lengths to match mirror_positions()' output.
+
+    Mirroring swaps the subject's left and right limbs, so the edge
+    (l_shoulder, l_elbow) now measures what was the RIGHT upper arm. The
+    recorded targets must follow, or the metadata describes a body the
+    positions no longer have -- and these subjects are not symmetric: the
+    lifter gives one of them an 11% (up to 0.15 m) left/right difference.
+
+    targets: (n_edges,) lengths. edges: (n_edges, 2) joint index pairs, in the
+    same order. Returns a new array of the same shape.
+    """
+    swap = {a: b for a, b in joint_pairs}
+    swap.update({b: a for a, b in joint_pairs})
+
+    edges = np.asarray(edges)
+    targets = np.asarray(targets, dtype=float)
+    lookup = {frozenset((int(u), int(v))): value for (u, v), value in zip(edges, targets)}
+
+    mirrored = targets.copy()
+    for index, (u, v) in enumerate(edges):
+        counterpart = frozenset((swap.get(int(u), int(u)), swap.get(int(v), int(v))))
+        if counterpart in lookup:
+            mirrored[index] = lookup[counterpart]
+    return mirrored
 
 
 def _rotation_matrix(axis: str, angle_deg: float) -> np.ndarray:
@@ -121,6 +207,13 @@ def augment_positions(positions: np.ndarray, config: AugmentationConfig) -> tupl
     rng = np.random.default_rng(config.seed)
     out = np.asarray(positions, dtype=np.float64).copy()
     applied = {"seed": config.seed}
+
+    # Mirror first: it is deterministic, so drawing it before the random
+    # transforms keeps a given seed's rotation/noise identical whether or not
+    # mirroring is on, which makes the two variants directly comparable.
+    if config.mirror:
+        out = mirror_positions(out)
+    applied["mirror"] = bool(config.mirror)
 
     if config.rotate:
         out, rotation_params = rotate_positions(out, axis=config.rotation_axis,
