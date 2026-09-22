@@ -27,9 +27,11 @@ class AssistSequenceDataset(Dataset):
         # load selected features
         self.features = [data[k] for k in feature_keys]
 
-        # ===== labels fixed 2 outputs =====
-        self.step = data["step_id"]            # (T,)
+        # ===== labels fixed 3 outputs =====
+        self.step = data["task_id"]            # (T,)
         self.progress = data["task_progress"]
+        self.mistake = data["mistake"]
+        
 
         # ===== config =====
         self.window_size = window_size
@@ -71,11 +73,13 @@ class AssistSequenceDataset(Dataset):
             y = {
                 "step": torch.tensor(self.step[target_index], dtype=torch.long),
                 "progress": torch.tensor(self.progress[target_index], dtype=torch.float32),
+                "mistake": torch.tensor(self.mistake[target_index], dtype=torch.long),
             }
         elif self.mode == "seq2seq":
             y = {
                 "step": torch.tensor(self.step[start:end], dtype=torch.long),
                 "progress": torch.tensor(self.progress[start:end], dtype=torch.float32),
+                "mistake": torch.tensor(self.mistake[start:end], dtype=torch.long),
             }
         else:
             raise ValueError("mode must be seq2one or seq2seq")

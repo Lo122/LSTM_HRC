@@ -23,8 +23,8 @@ from tqdm import tqdm
 # Config
 # ===========================================================
 # json_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset\annotations\all"
-pt_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset_3d\original"
-pt_train_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset_3d\train\raw"
+pt_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset\skeleton_3d\ceiling_panel_installation_03\original"
+pt_train_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset\skeleton_3d\ceiling_panel_installation_03\train\raw"
 
 
 # FEATURE_KEYS = [
@@ -126,9 +126,10 @@ class NormDatasetBuilder:
 
         #'step_id', 'step_id_prob', 'status_id', 'status_id_prob', 'task_progress', 'step_id_plateau', 'step_id_plateau_prob', 'status_id_plateau', 'status_id_plateau_prob', 'step_id_vector', 'status_id_vector', 'step_id_plateau_vector', 'status_id_plateau_vector', 'task_progress_vector'
         # ===== save labels for 3d =====
-        save_dict["step_id"] = labels["step_id"].numpy().astype(np.int64)
-        save_dict["step_id_vector"] = labels["step_id_vector"].numpy().astype(np.float32)
-        save_dict["status_id"] = labels["status_id"].numpy().astype(np.int64)
+        save_dict["task_id"] = labels["task_id"].numpy().astype(np.int64)
+        save_dict["mistake"] = labels["mistake"].numpy().astype(np.int64)
+        # save_dict["task_id_vector"] = labels["task_id_vector"].numpy().astype(np.float32)
+        # save_dict["status_id"] = labels["status_id"].numpy().astype(np.int64)
         save_dict["task_progress"] = labels["task_progress"].numpy().astype(np.float32)/ 100.0  # normalize to [0,1]
 
 
@@ -168,9 +169,9 @@ if __name__ == "__main__":
     today_date = datetime.datetime.now().strftime("%Y-%m-%d")
 
     # seg_pt_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset\segment"
-    seg_pt_test_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset_3d\test\raw"
-    seg_pt_val_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset_3d\val\raw"
-    seg_pt_train_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset_3d\train\raw"
+    seg_pt_test_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset\skeleton_3d\ceiling_panel_installation_03\test\raw"
+    seg_pt_val_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset\skeleton_3d\ceiling_panel_installation_03\val\raw"
+    seg_pt_train_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset\skeleton_3d\ceiling_panel_installation_03\train\raw"
     
     #split train/test dataset 80/20
     train_files, test_files = split_raw_pt_files(seg_pt_train_dir, seg_pt_test_dir, test_ratio=0.2)
@@ -187,7 +188,7 @@ if __name__ == "__main__":
     np.savez(f"data_proc_3d/dataset/norm_{today_date}.npz", **norm_stats)
     builder = NormDatasetBuilder(norm_stats)
 
-    out_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset_3d\train\norm" 
+    out_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset\skeleton_3d\ceiling_panel_installation_03\train\norm"
     for pt_file in train_files:
         pt_path = os.path.join(seg_pt_train_dir, pt_file)
         

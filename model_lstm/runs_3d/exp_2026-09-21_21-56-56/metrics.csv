@@ -1,0 +1,7 @@
+epoch,train_loss,val_loss,train_step_loss,val_step_loss,train_progress_loss,val_progress_loss,train_acc,val_acc,train_progress_mae,val_progress_mae,train_mistake_loss,val_mistake_loss,train_mistake_acc,val_mistake_acc
+1,nan,nan,nan,nan,nan,nan,0.12514908843073777,0.1443442054129077,nan,nan,nan,nan,0.9013034588515931,0.9462179042331714
+2,nan,nan,nan,nan,nan,nan,0.12514908843073777,0.1443442054129077,nan,nan,nan,nan,0.9013034588515931,0.9462179042331714
+3,nan,nan,nan,nan,nan,nan,0.12514908843073777,0.1443442054129077,nan,nan,nan,nan,0.9013034588515931,0.9462179042331714
+4,nan,nan,nan,nan,nan,nan,0.12514908843073777,0.1443442054129077,nan,nan,nan,nan,0.9013034588515931,0.9462179042331714
+5,nan,nan,nan,nan,nan,nan,0.12514908843073777,0.1443442054129077,nan,nan,nan,nan,0.9013034588515931,0.9462179042331714
+6,nan,nan,nan,nan,nan,nan,0.12514908843073777,0.1443442054129077,nan,nan,nan,nan,0.9013034588515931,0.9462179042331714

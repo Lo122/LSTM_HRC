@@ -1,0 +1,1 @@
+epoch,train_loss,val_loss,train_step_loss,val_step_loss,train_progress_loss,val_progress_loss,train_acc,val_acc,train_progress_mae,val_progress_mae
