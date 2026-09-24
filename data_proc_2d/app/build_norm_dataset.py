@@ -1,6 +1,9 @@
 # concat various features, normalize data and build frame-level dataset for modeling
 import os
 import json
+import random
+import re
+from collections import defaultdict
 import numpy as np
 from dataclasses import dataclass
 from typing import Optional, Tuple
@@ -23,8 +26,8 @@ from tqdm import tqdm
 # Config
 # ===========================================================
 # json_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset\annotations\all"
-pt_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset\skeleton_3d\ceiling_panel_installation_03\original"
-pt_train_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset\skeleton_3d\ceiling_panel_installation_03\train\raw"
+pt_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset\skeleton_3d\ceiling_panel_installation_04\augmented_mirror"
+pt_train_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset\skeleton_3d\ceiling_panel_installation_04\aug_train\raw"
 
 
 # FEATURE_KEYS = [
@@ -139,6 +142,57 @@ class NormDatasetBuilder:
 
         print(f"Saved: {out_path}")
 
+def split_by_uid(files, ratios=(0.8, 0.1, 0.1), n_trials=5000, seed=42):
+    groups = defaultdict(list)
+    for file in files:
+        uid = re.search(r"uid-(\d+)", str(file)).group(1)
+        groups[uid].append(file)
+
+    if len(groups) < 3:
+        raise ValueError("Not enough unique uids to split into 3 parts.")
+
+    rng = random.Random(seed)
+    uids = list(groups)
+    total = len(files)
+    targets = [total * ratio for ratio in ratios]
+    best_score = float("inf")
+    best_split = None
+
+    for _ in range(n_trials):
+        rng.shuffle(uids)
+        split = [[], [], []]
+        counts = [0, 0, 0]
+
+        for position, uid in enumerate(uids):
+            size = len(groups[uid])
+            empty = [i for i in range(3) if not split[i]]
+            remaining = len(uids) - position
+            candidates = empty if remaining == len(empty) else range(3)
+
+            index = min(
+                candidates,
+                key=lambda i: (
+                    (counts[i] + size - targets[i]) ** 2
+                    - (counts[i] - targets[i]) ** 2
+                ),
+            )
+            split[index].append(uid)
+            counts[index] += size
+
+        score = sum(
+            (count - target) ** 2
+            for count, target in zip(counts, targets)
+        )
+        if score < best_score:
+            best_score = score
+            best_split = [part.copy() for part in split]
+
+    return tuple(
+        [file for uid in part for file in groups[uid]]
+        for part in best_split
+    )
+
+
 def split_raw_pt_files(pt_dir, pt_test_dir, test_ratio=0.2, seed=42):
     pt_files = sorted([f for f in os.listdir(pt_dir) if f.endswith(".pt")])
 
@@ -169,26 +223,61 @@ if __name__ == "__main__":
     today_date = datetime.datetime.now().strftime("%Y-%m-%d")
 
     # seg_pt_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset\segment"
-    seg_pt_test_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset\skeleton_3d\ceiling_panel_installation_03\test\raw"
-    seg_pt_val_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset\skeleton_3d\ceiling_panel_installation_03\val\raw"
-    seg_pt_train_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset\skeleton_3d\ceiling_panel_installation_03\train\raw"
+    seg_pt_test_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset\skeleton_3d\ceiling_panel_installation_04\aug_test\raw"
+    seg_pt_val_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset\skeleton_3d\ceiling_panel_installation_04\aug_val\raw"
+    seg_pt_train_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset\skeleton_3d\ceiling_panel_installation_04\aug_train\raw"
     
-    #split train/test dataset 80/20
-    train_files, test_files = split_raw_pt_files(seg_pt_train_dir, seg_pt_test_dir, test_ratio=0.2)
+    # #split train/test dataset 80/20
+    # train_files, test_files = split_raw_pt_files(seg_pt_train_dir, seg_pt_test_dir, test_ratio=0.2)
 
-    #split test/val dataset 10/10
-    test_files, val_files = split_raw_pt_files(seg_pt_test_dir,seg_pt_val_dir,test_ratio=0.5)
+    # #split test/val dataset 10/10
+    # test_files, val_files = split_raw_pt_files(seg_pt_test_dir,seg_pt_val_dir,test_ratio=0.5)
 
 
 
+    # train_files = sorted([f for f in os.listdir(seg_pt_train_dir) if f.endswith(".pt")])
+    original_pt_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset\skeleton_3d\ceiling_panel_installation_04\augmented_mirror"
+    all_files = sorted([f for f in os.listdir(original_pt_dir) if f.endswith(".pt")])
+
+    for fname in tqdm(all_files, desc="Remapping task_id 8 to 7"):
+        pt_path = os.path.join(original_pt_dir, fname)
+        data = torch.load(pt_path, map_location="cpu")
+        task_ids = data["labels"]["task_id"]
+        mask = task_ids == 8
+        if mask.any():
+            task_ids[mask] = 7
+            torch.save(data, pt_path)
+    
+    val_files = sorted([f for f in os.listdir(seg_pt_val_dir) if f.endswith(".pt")])
+    test_files = sorted([f for f in os.listdir(seg_pt_test_dir) if f.endswith(".pt")])
     train_files = sorted([f for f in os.listdir(seg_pt_train_dir) if f.endswith(".pt")])
+
+    if len(val_files) == 0:
+        train_files, val_files, test_files = split_by_uid(all_files)
+
+        #rename + move files to train/val/test folders
+        for f in train_files:
+            os.rename(
+                os.path.join(original_pt_dir, f),
+                os.path.join(seg_pt_train_dir, f)
+            )
+        for f in val_files:
+            os.rename(
+                os.path.join(original_pt_dir, f),
+                os.path.join(seg_pt_val_dir, f)
+            )
+        for f in test_files:
+            os.rename(
+                os.path.join(original_pt_dir, f),
+                os.path.join(seg_pt_test_dir, f)
+            )
     #return mean and std for each feature type (degree, ratio, speed, accel) in order to normalize data when building dataset
     norm_stats  = compute_global_norm_stats(train_files)
 
-    np.savez(f"data_proc_3d/dataset/norm_{today_date}.npz", **norm_stats)
+    np.savez(f"data_proc_3d/dataset/norm_mirrored_{today_date}.npz", **norm_stats)
     builder = NormDatasetBuilder(norm_stats)
 
-    out_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset\skeleton_3d\ceiling_panel_installation_03\train\norm"
+    out_dir = r"G:\.shortcut-targets-by-id\1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC\ITECH_Thesis\Videos\dataset\skeleton_3d\ceiling_panel_installation_04\aug_train\norm"
     for pt_file in train_files:
         pt_path = os.path.join(seg_pt_train_dir, pt_file)
         

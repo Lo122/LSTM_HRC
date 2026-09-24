@@ -23,6 +23,7 @@ __pycache__/
 
 *.json
 *.npz
+model_lstm/.dataset_cache/
 
 logs
 model_data/
