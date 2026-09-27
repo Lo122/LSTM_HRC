@@ -12,6 +12,17 @@ noise draw. Labels are unaffected by a spatial transform of the skeleton
 as-is from skeleton_pipeline.dataset.labels.extract_labels rather than
 recomputed per augmentation.
 
+Each copy then goes through the SAME cleanup build_training_pairs.py runs on
+the originals -- skeleton_pipeline.dataset.cleanup.trim_empty_edges (drop the
+leading/trailing frames with no skeleton) followed by cleanup.
+fill_nan_last_known (hold the remaining NaNs at their last known value). The
+two scripts have to stay in step here: an augmented .pt built without them
+reintroduces the all-NaN rows the originals were cleaned of, and a single NaN
+makes that feature column's mean/std NaN for the whole dataset, which
+normalization then spreads over every frame of every take. Both are on by
+default; --no-trim-empty / --no-fill-nan turn them off, as in
+build_training_pairs.py.
+
 Run build_training_pairs.py first (or alongside -- they're independent) to
 get the un-augmented "original" take for every video too; a typical
 training set uses both.
@@ -36,7 +47,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-from skeleton_pipeline.dataset import io_utils, labels, feature_io
+from skeleton_pipeline.dataset import cleanup, io_utils, labels, feature_io
 from skeleton_pipeline.dataset.augment import (
     AugmentationConfig, augment_positions, mirror_bone_length_targets)
 from skeleton_pipeline.plotting.label_plots import plot_label_debug
@@ -47,8 +58,8 @@ GOOGLE_DRIVE_ROOT = Path(r"G:\.shortcut-targets-by-id\1Ykdzx6UjCe0KPKy_6M4LgCOTx
 DATASET_ROOT = GOOGLE_DRIVE_ROOT / "dataset" / "skeleton_3d" / "ceiling_panel_installation"
 NPZ_ROOT = DATASET_ROOT / "raw_npz"                    # generate_lstm_training_data.py output
 ANNOTATIONS_DIR = GOOGLE_DRIVE_ROOT / "annotations" / "ceiling_installation"
-OUT_PT_DIR = GOOGLE_DRIVE_ROOT / "dataset" / "skeleton_3d" / "ceiling_panel_installation_02" / "augmented_rotations"
-PLOT_DIR = GOOGLE_DRIVE_ROOT / "dataset" / "skeleton_3d" / "ceiling_panel_installation_02" / "label_plots"
+OUT_PT_DIR = GOOGLE_DRIVE_ROOT / "dataset" / "skeleton_3d" / "ceiling_panel_installation_05" / "augmented_mirror"
+PLOT_DIR = GOOGLE_DRIVE_ROOT / "dataset" / "skeleton_3d" / "ceiling_panel_installation_05" / "label_plots"
 LOG_PATH = PROJECT_ROOT / "logs" / "augment_dataset_3d.log"
 
 # The trailing "-N" is a take split across two annotation files.
@@ -85,6 +96,26 @@ def parse_args():
                               "trained on an estimator deployment does not have. See "
                               "skeleton_pipeline/features/h36m_features.py's _savgol_derivative.")
     parser.set_defaults(causal_features=True)
+    # Kept identical to build_training_pairs.py's flags of the same name: the
+    # augmented copies have to be cleaned exactly like the originals they are
+    # trained alongside, so anything that changes one must change the other.
+    parser.add_argument("--no-trim-empty", dest="trim_empty", action="store_false",
+                        help="Keep leading/trailing frames that have no skeleton. Off by "
+                             "default because those frames are all-NaN yet still carry task "
+                             "labels, and a NaN propagates through an LSTM sequence -- see "
+                             "skeleton_pipeline/dataset/cleanup.py's trim_empty_edges.")
+    parser.set_defaults(trim_empty=True)
+    parser.add_argument("--min-valid-fraction", type=float, default=0.0,
+                        help="Refuse to build a take if, after trimming, less than this "
+                             "fraction of its frames has a skeleton (e.g. 0.8). Default 0 = "
+                             "build everything and just report.")
+    parser.add_argument("--no-fill-nan", dest="fill_nan", action="store_false",
+                        help="Leave the NaNs that survive trimming (interior gaps, short "
+                             "runs, degenerate columns) in the saved features. Off by "
+                             "default because a single NaN makes that column's dataset-wide "
+                             "mean/std NaN, which normalization then spreads over every "
+                             "frame of every take -- see cleanup.fill_nan_last_known.")
+    parser.set_defaults(fill_nan=True)
     parser.add_argument("--seed", type=int, default=0,
                          help="Base seed -- augmentation k of take N uses seed + N*1000 + k for "
                               "reproducibility without every take/augmentation sharing one draw.")
@@ -159,11 +190,31 @@ def main():
                 }
 
                 take_aug_id = f"{take_id}_aug-{aug_index:02}"
-                output_data = {"metadata": metadata, "features": features, "labels": label_tensors}
+
+                # The same two cleanup steps build_training_pairs.py runs on the
+                # originals, in the same order -- an augmented .pt that skipped
+                # them would put the all-NaN edges and interior gaps straight
+                # back into the training set the originals were cleaned of, and
+                # one such file makes the dataset-wide normalization NaN.
+                # The trimmed labels go in aug_labels, NOT back into
+                # label_tensors: that one is extracted once per take and reused
+                # by every augmentation of it, so trimming it here would shorten
+                # it again on each pass. trim_empty_edges builds a new dict
+                # rather than slicing in place, which is what makes that safe.
+                aug_labels = label_tensors
+                if args.trim_empty:
+                    metadata, features, aug_labels = cleanup.trim_empty_edges(
+                        take_aug_id, metadata, features, aug_labels, logger,
+                        min_valid_fraction=args.min_valid_fraction)
+                if args.fill_nan:
+                    metadata, features = cleanup.fill_nan_last_known(
+                        take_aug_id, metadata, features, logger)
+
+                output_data = {"metadata": metadata, "features": features, "labels": aug_labels}
                 io_utils.save_torch(output_data, OUT_PT_DIR / f"features__{take_aug_id}.pt", logger=logger)
                 logger.info("  aug-%02d: mirror=%s rotation=%s noise=%s -> %s frames",
                             aug_index, applied_params["mirror"], applied_params["rotation"],
-                            applied_params["noise"], total_frames)
+                            applied_params["noise"], metadata["total_frames"])
 
                 if SAVE_PLOTS or SHOW_PLOTS:
                     plot_label_debug(take_aug_id, debug_frames, logger, show=SHOW_PLOTS, save=SAVE_PLOTS,

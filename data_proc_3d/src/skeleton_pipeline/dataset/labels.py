@@ -72,24 +72,39 @@ ANNOTATION_STEP_IDS = {
 EXCLUDE_STEPS = [step_id for step_id in ANNOTATION_STEP_IDS.values() if step_id >= 15]
 ACTIVE_LABEL_IDS = sorted(set(ANNOTATION_STEP_IDS.values()) - set(EXCLUDE_STEPS))
 
+# Synthetic, never present in an annotation file: the column the runs of frames no
+# annotation covers are scored into (see _uncovered_spans). It sits outside the
+# ELAN tiers because 0-15 are all real ones -- in particular 8 is
+# "M - Pull the Cables", not "unlabeled".
+NO_LABEL_STEP_ID = 16
+
 # The model's actual output taxonomy, collapsing the annotation tiers above.
 # {output_id: {name: [annotation step_ids that map to it]}}.
 #
-# Two heads, not one: entries 0-6 are the mutually exclusive TASK classes, and
-# the last entry is the separate binary MISTAKE flag. A mistake is not a class
+# Two heads, not one: entries 0-6 plus 8 are the mutually exclusive TASK classes,
+# and entry 7 is the separate binary MISTAKE flag. A mistake is not a class
 # of its own -- "M - Screw" is still the Screw task, done wrong -- so each M-
 # tier appears twice here: once under its task, once under Mistake. That is why
 # the flag needs its own output rather than an eighth class: predicting "Screw"
 # and "this is a mistake" are different questions about the same frame.
+#
+# 8 "No Related Task" carries no annotation tiers: nothing in the ELAN exports
+# maps to it. It is the class the runs of frames no annotation covers are scored
+# into (idle time between pieces, walking off to fetch the next panel) -- about a
+# third of the corpus. _uncovered_spans synthesises one entry per run so they ramp
+# and plateau like any other label. Without it those frames still reach
+# _highest_value_label_per_frame's idxmax, which ties across an all-zero row and
+# silently returns column 0 -- labelling idle time "Pull Cables".
 LABEL_MAP_DICT = {
     0: {"Pull Cables": [0, 6, 8]},
     1: {"Lift": [1, 9]},
-    2: {"Align": [2, 10]},
-    3: {"Screw": [3, 11]},
-    4: {"Connect Cables": [4, 12]},
-    5: {"Clamp Coupling": [5, 14]},
-    6: {"Place": [7, 13]},
-    7: {"Mistake": [8, 9, 10, 11, 12, 13, 14]}
+    2: {"Place": [7, 13]},
+    3: {"Align": [2, 10]},
+    4: {"Screw": [3, 11]},
+    5: {"Connect Cables": [4, 12]},
+    6: {"Clamp Coupling": [5, 14]},
+    7: {"Mistake": [8, 9, 10, 11, 12, 13, 14]},
+    8: {"No Related Task": []},
 }
 MISTAKE_ENTRY_NAME = "Mistake"
 
@@ -111,6 +126,16 @@ def _unpack_label_map(label_map: dict) -> tuple[dict, dict, set]:
 TASK_NAMES, STEP_TO_TASK, MISTAKE_STEP_IDS = _unpack_label_map(LABEL_MAP_DICT)
 TASK_IDS = sorted(TASK_NAMES)
 
+# By name, not by literal id: LABEL_MAP_DICT's ids have been reordered once already.
+_TASK_ID_BY_NAME = {name: task_id for task_id, name in TASK_NAMES.items()}
+NO_TASK_NAME = "No Related Task"
+NO_TASK_ID = _TASK_ID_BY_NAME[NO_TASK_NAME]
+LIFT_TASK_ID = _TASK_ID_BY_NAME["Lift"]
+# Lift is annotated as the whole time the subject holds the panel up, so its span
+# runs on under the Place and Align spans that happen while it is held. Only the
+# part before those begin is the lift itself -- see _trim_lift_before_overlap.
+LIFT_BLOCKING_TASK_IDS = (_TASK_ID_BY_NAME["Place"], _TASK_ID_BY_NAME["Align"])
+
 # Every annotated step the pipeline keeps must land in a task, or its frames
 # would silently train as "no task" while still carrying real motion.
 _UNMAPPED_STEPS = sorted(set(ACTIVE_LABEL_IDS) - set(STEP_TO_TASK))
@@ -119,6 +144,88 @@ if _UNMAPPED_STEPS:
         f"LABEL_MAP_DICT does not map annotation step id(s) {_UNMAPPED_STEPS}; "
         f"every id in ACTIVE_LABEL_IDS ({ACTIVE_LABEL_IDS}) needs a task.")
 
+
+
+def _trim_lift_before_overlap(task_entries: list[dict],
+                               lift_task_id: int = LIFT_TASK_ID,
+                               blocking_task_ids: tuple = LIFT_BLOCKING_TASK_IDS) -> list[dict]:
+    """Cuts each Lift span back to just before the Place or Align span that runs under it.
+
+    Lift is annotated as the whole time the panel is held up, so one Lift span
+    covers the Place and Align that happen while the subject holds it -- e.g.
+    uid-05_take-02 piece 1: Lift 115-1104 against Place 453-652 and Align 652-1104.
+    Only 115-452 is the lift itself, so that is what is kept; the rest is already
+    described by the step doing the work.
+
+    Runs on TASK entries, after to_task_entries has folded the M- tiers in, so
+    "M - Lift" is trimmed as Lift and "M - Align" blocks as Align. Pull Cables is
+    deliberately not a blocker: cables get pulled while the panel is already up.
+
+    An entry no Place/Align span touches is returned unchanged. One whose earliest
+    blocker covers its own start frame has no lift-only part at all and is dropped
+    rather than emitted as an inverted span.
+    """
+    trimmed = []
+    for entry in task_entries:
+        start_frame = entry.get("start_frame")
+        end_frame = entry.get("end_frame")
+        if (entry.get("task_id") != lift_task_id
+                or start_frame is None or end_frame is None):
+            trimmed.append(entry)
+            continue
+
+        # Intersecting, not just starting inside: a Place span that opens before
+        # this Lift and runs into it leaves no clean lift either.
+        blocker_starts = [other["start_frame"] for other in task_entries
+                          if other.get("task_id") in blocking_task_ids
+                          and other.get("start_frame") is not None
+                          and other.get("end_frame") is not None
+                          and other["end_frame"] >= start_frame
+                          and other["start_frame"] <= end_frame]
+        if not blocker_starts:
+            trimmed.append(entry)
+            continue
+
+        new_end_frame = min(end_frame, min(blocker_starts) - 1)
+        if new_end_frame < start_frame:
+            continue
+        trimmed.append({**entry, "end_frame": new_end_frame})
+    return trimmed
+
+
+def _uncovered_spans(label_entries: list[dict], frame_size: int,
+                      exclude_steps: list | None = None) -> list[tuple[int, int]]:
+    """The inclusive (start, end) frame runs no entry covers.
+
+    About a third of the corpus: idle time between pieces, fetching the next panel,
+    the pauses either side of a take. extract_labels turns each run into a
+    "No Related Task" entry so it is scored by the same ramp-and-plateau machinery
+    as a real span, instead of being left as an all-zero row for idxmax to tie-break.
+    """
+    exclude_steps = EXCLUDE_STEPS if exclude_steps is None else exclude_steps
+    covered = np.zeros(frame_size, dtype=bool)
+    for entry in label_entries:
+        if entry.get("step_id") in exclude_steps:
+            continue
+        start_frame = entry.get("start_frame")
+        end_frame = entry.get("end_frame")
+        if start_frame is None or end_frame is None:
+            continue
+        start_frame = max(int(round(float(start_frame))), 0)
+        end_frame = min(int(round(float(end_frame))), frame_size - 1)
+        if start_frame <= end_frame:
+            covered[start_frame:end_frame + 1] = True
+
+    spans, run_start = [], None
+    for frame, is_covered in enumerate(covered):
+        if not is_covered and run_start is None:
+            run_start = frame
+        elif is_covered and run_start is not None:
+            spans.append((run_start, frame - 1))
+            run_start = None
+    if run_start is not None:
+        spans.append((run_start, frame_size - 1))
+    return spans
 
 
 def to_task_entries(label_entries: list[dict], exclude_steps: list | None = None) -> list[dict]:
@@ -161,7 +268,13 @@ def to_task_entries(label_entries: list[dict], exclude_steps: list | None = None
 @dataclass
 class LabelConfiguration:
     """Mirrors data_proc_2d/app/build_training_pairs.py's
-    labelling_utils.LabelConfiguration(buffer=100.0, function_type="bezier")."""
+    labelling_utils.LabelConfiguration(buffer=100.0, function_type="bezier").
+
+    Note the buffer's reach: a span is scored above 0.5 until buffer/2 frames past
+    its own edges, so two ADJACENT spans still overlap by a full 100 frames wherever
+    that threshold is what gets read -- the label lanes in the overview plots, for
+    one. That softness is deliberate; it is not the trim failing.
+    """
     buffer: float = 100.0          # ramp-in/out width around each labeled span, in frames
     function_type: str = "bezier"  # only "bezier" (smoothstep) is implemented below
 
@@ -191,8 +304,8 @@ def extract_labels(
     (T, len(TASK_IDS)) *_vector of per-class scores for soft-label training.
     The *_plateau variants score a flat 1.0 across the whole annotated span
     rather than peaking at its midpoint. The raw step_id* tensors (the 15
-    un-collapsed annotation tiers) come along for debugging and plots; they are
-    not model outputs."""
+    un-collapsed annotation tiers, plus NO_LABEL_STEP_ID) come along for
+    debugging and plots; they are not model outputs."""
     import torch
 
     exclude_steps = EXCLUDE_STEPS if exclude_steps is None else exclude_steps
@@ -201,14 +314,28 @@ def extract_labels(
     frame_index = pd.RangeIndex(frame_size)
     step_labels = step_id_data.get("labels", []) if step_id_data else []
 
-    task_labels = to_task_entries(step_labels, exclude_steps)
+    # The raw step tiers stay raw: the trim belongs to the collapsed taxonomy, and
+    # runs on task entries so the M- tiers have already been folded into it.
+    task_labels = _trim_lift_before_overlap(to_task_entries(step_labels, exclude_steps))
     mistake_labels = [entry for entry in task_labels if entry["is_mistake"]]
+
+    # Computed per level rather than shared: trimming Lift can leave a tail the task
+    # taxonomy no longer covers while the raw step tier still does. ramp_inward keeps
+    # each gap's smoothing inside the gap, so it never scores a frame an annotation
+    # covers -- see _define_step_label_entry.
+    step_gap_labels = [{"step_id": NO_LABEL_STEP_ID, "ramp_inward": True,
+                        "start_frame": start, "end_frame": end}
+                       for start, end in _uncovered_spans(step_labels, frame_size, exclude_steps)]
+    task_gap_labels = [{"step_id": NO_LABEL_STEP_ID, "task_id": NO_TASK_ID, "ramp_inward": True,
+                        "start_frame": start, "end_frame": end}
+                       for start, end in _uncovered_spans(task_labels, frame_size, exclude_steps)]
 
     label_db = pd.DataFrame(index=frame_index)
     step_id_db, step_id_plateau_db = _build_label_variants(
-        step_labels, frame_size, frame_index, label_config, exclude_steps)
+        step_labels + step_gap_labels, frame_size, frame_index, label_config, exclude_steps,
+        columns=ACTIVE_LABEL_IDS + [NO_LABEL_STEP_ID])
     task_id_db, task_id_plateau_db = _build_label_variants(
-        task_labels, frame_size, frame_index, label_config, exclude_steps,
+        task_labels + task_gap_labels, frame_size, frame_index, label_config, exclude_steps,
         label_key="task_id", columns=TASK_IDS)
     mistake_db, mistake_plateau_db = _build_label_variants(
         mistake_labels, frame_size, frame_index, label_config, exclude_steps,
@@ -231,10 +358,10 @@ def extract_labels(
     label_db["mistake"] = (mistake_plateau_db[0] >= 0.5).astype(np.int64)
 
     # Progress of the task that task_id names for that frame, NOT the largest
-    # progress over all tasks: 21.5% of labelled frames have two steps annotated
-    # at once (Lift + Lifting Main, Lift + Align, ...), and taking the max there
-    # reports a concurrent task's near-100% while the selected one has barely
-    # started.
+    # progress over all tasks: steps are still annotated concurrently after the
+    # Lift trim (a mistake tier runs inside the task it spoils, spans meet at a
+    # shared frame), and taking the max there reports a concurrent task's
+    # near-100% while the selected one has barely started.
     label_db["task_progress"] = _value_at_selected_label(
         task_progress_db, label_db["task_id"], frame_index)
 
@@ -279,7 +406,8 @@ def _smoothstep(t: np.ndarray) -> np.ndarray:
 
 
 def _define_step_label_entry(frame_size: int, start_frame: float, end_frame: float,
-                              buffer: float, smooth_type: str) -> pd.Series:
+                              buffer: float, smooth_type: str,
+                              ramp_inward: bool = False) -> pd.Series:
     """Returns a (frame_size,) score curve in [0, 1] for one labeled span.
 
     - "plateau": smoothstep ramp 0->1 over [start-buffer, start], flat 1
@@ -288,29 +416,39 @@ def _define_step_label_entry(frame_size: int, start_frame: float, end_frame: flo
       span's temporal midpoint) instead of a flat top -- avoids a tie
       across the whole plateau when _highest_value_label_per_frame later
       picks one label per frame via idxmax.
+
+    *ramp_inward* moves both ramps INSIDE the span, so the curve is 0 at the
+    span's own edges and scores nothing at all beyond them. The synthesized
+    "No Related Task" gaps use it: a gap runs exactly between two annotations,
+    so ramping outward the usual way would score it on frames a real tier
+    covers -- and a long gap's slowly-decaying peak then beats a short real
+    span near that span's edges, stealing frames that were annotated.
     """
     frames = np.arange(frame_size, dtype=np.float64)
     start_frame = float(start_frame)
     end_frame = float(end_frame)
     buffer = max(float(buffer), 1e-6)
+    ramp_start = start_frame if ramp_inward else start_frame - buffer
+    ramp_end = end_frame if ramp_inward else end_frame + buffer
 
     if smooth_type == "plateau":
-        ramp_up = _smoothstep((frames - (start_frame - buffer)) / buffer)
-        ramp_down = _smoothstep(((end_frame + buffer) - frames) / buffer)
+        ramp_up = _smoothstep((frames - ramp_start) / buffer)
+        ramp_down = _smoothstep((ramp_end - frames) / buffer)
         values = np.minimum(ramp_up, ramp_down)
-        values = np.where((frames >= start_frame) & (frames <= end_frame), 1.0, values)
+        if not ramp_inward:
+            values = np.where((frames >= start_frame) & (frames <= end_frame), 1.0, values)
     elif smooth_type == "asymmetric_peak":
         apex = (start_frame + end_frame) / 2.0
-        up_span = max(apex - (start_frame - buffer), 1e-6)
-        down_span = max((end_frame + buffer) - apex, 1e-6)
-        ramp_up = _smoothstep((frames - (start_frame - buffer)) / up_span)
-        ramp_down = _smoothstep(((end_frame + buffer) - frames) / down_span)
+        up_span = max(apex - ramp_start, 1e-6)
+        down_span = max(ramp_end - apex, 1e-6)
+        ramp_up = _smoothstep((frames - ramp_start) / up_span)
+        ramp_down = _smoothstep((ramp_end - frames) / down_span)
         values = np.where(frames <= apex, ramp_up, ramp_down)
     else:
         raise ValueError(f"Unknown smooth_type: {smooth_type!r}")
 
     values = np.clip(values, 0.0, 1.0)
-    values[(frames < start_frame - buffer) | (frames > end_frame + buffer)] = 0.0
+    values[(frames < ramp_start) | (frames > ramp_end)] = 0.0
     return pd.Series(values, index=pd.RangeIndex(frame_size))
 
 
@@ -380,7 +518,8 @@ def _build_label_matrix(label_entries: list[dict], frame_size: int, frame_index:
         label_db = _accumulate_label_series(
             label_db, column,
             _define_step_label_entry(frame_size, start_frame, end_frame,
-                                      buffer=label_config.buffer, smooth_type=smooth_type),
+                                      buffer=label_config.buffer, smooth_type=smooth_type,
+                                      ramp_inward=label_info.get("ramp_inward", False)),
             frame_index, max_value=1.0,
         )
     return _ensure_db_columns(label_db, frame_index, columns)

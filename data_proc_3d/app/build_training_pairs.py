@@ -21,12 +21,18 @@ This script then, per take:
      app/proc_annotations.py from the ELAN exports) and turns it into smooth
      per-frame label tensors (skeleton_pipeline.dataset.labels.extract_labels),
   3. trims the leading/trailing frames that have NO skeleton at all (see
-     trim_empty_edges -- a take can start or end with minutes of video the
-     detector never found the subject in, while the annotations still cover
-     that span, which pairs empty features with real labels),
-  4. torch.save's one {"metadata", "features", "labels"} dict per take
+     skeleton_pipeline.dataset.cleanup.trim_empty_edges -- a take can start or
+     end with minutes of video the detector never found the subject in, while
+     the annotations still cover that span, pairing empty features with real
+     labels),
+  4. fills the NaNs that survive that trim -- interior gaps, runs too short for
+     the feature windows, degenerate columns -- with the last known value of
+     their own column (cleanup.fill_nan_last_known; a single NaN would otherwise
+     make that column's dataset-wide mean/std NaN and normalization would
+     spread it over every frame of every take),
+  5. torch.save's one {"metadata", "features", "labels"} dict per take
      (skeleton_pipeline.dataset.io_utils.save_torch),
-  5. writes two plots per take into PLOT_DIR: label_plot__* (the label curves
+  6. writes two plots per take into PLOT_DIR: label_plot__* (the label curves
      alone) and overview__* (features and labels on one shared time axis).
 
 See skeleton_pipeline/dataset/labels.py's module docstring for the
@@ -41,7 +47,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-from skeleton_pipeline.dataset import io_utils, labels, feature_io
+from skeleton_pipeline.dataset import cleanup, io_utils, labels, feature_io
 from skeleton_pipeline.plotting.label_plots import plot_label_debug
 from skeleton_pipeline.plotting.feature_plots import plot_overview_with_labels
 
@@ -53,8 +59,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 GOOGLE_DRIVE_ROOT = Path(r"G:\.shortcut-targets-by-id\1Ykdzx6UjCe0KPKy_6M4LgCOTxKK6Awgy\Videos")
 NPZ_ROOT = GOOGLE_DRIVE_ROOT / "dataset" / "skeleton_3d" / "ceiling_panel_installation" / "raw_npz"
 ANNOTATIONS_DIR = GOOGLE_DRIVE_ROOT / "annotations" / "ceiling_installation"
-OUT_PT_DIR =  GOOGLE_DRIVE_ROOT / "dataset" / "skeleton_3d" / "ceiling_panel_installation_03" / "original"
-PLOT_DIR = GOOGLE_DRIVE_ROOT / "dataset" / "skeleton_3d" / "ceiling_panel_installation_03" / "label_plots"
+OUT_PT_DIR =  GOOGLE_DRIVE_ROOT / "dataset" / "skeleton_3d" / "ceiling_panel_installation_05" / "original"
+PLOT_DIR = GOOGLE_DRIVE_ROOT / "dataset" / "skeleton_3d" / "ceiling_panel_installation_05" / "label_plots"
 LOG_PATH = PROJECT_ROOT / "logs" / "build_training_pairs_3d.log"
 
 # The trailing "-N" is a take split across two annotation files
@@ -67,95 +73,6 @@ SHOW_PLOTS = False
 
 
 
-
-
-def trim_empty_edges(take_id, metadata, features, label_tensors, logger,
-                      min_valid_fraction=0.0):
-    """Drop the leading and trailing frames that have no skeleton at all.
-
-    WHY. A take can open or close with a long span the detector never found
-    the subject in -- the subject has not walked on yet, or the camera kept
-    rolling after they left. The annotations, written against the video
-    timeline, still cover that span. The result is feature rows that are
-    entirely NaN paired with real task/mistake/progress labels. Measured over
-    this dataset: 2.7% of all frames have no skeleton, and almost all of it is
-    at the edges (only 55 interior frames in ~1.06M), but it is concentrated
-    brutally -- cam-07_uid-10_take-01 is 50.9% empty (trailing) and
-    cam-07_uid-06_take-02 is 47.1% empty (the first 195.8 s), of which 4881
-    empty frames sit inside a labelled task.
-
-    Those rows are worse than useless. A NaN anywhere in an LSTM input
-    propagates through every later timestep of that sequence, so a training
-    window overlapping the empty span does not merely contribute nothing --
-    it destroys its own gradient, while the label says a task was underway.
-
-    ONLY THE EDGES are trimmed, deliberately. Interior gaps are left as NaN
-    rather than deleted: removing an interior frame would splice two
-    non-adjacent moments together, and the velocity/acceleration features are
-    computed from consecutive frames, so the splice would manufacture a huge
-    fake motion at the joint. Leaving them NaN keeps time contiguous and lets
-    h36m_features' own per-run handling (see _valid_runs) deal with them.
-
-    min_valid_fraction: raise if the surviving span is still mostly empty --
-    such a take is better fixed (re-annotated, re-tracked, or dropped) than
-    quietly trained on.
-
-    Returns (metadata, features, label_tensors), trimmed in place of the
-    originals. metadata records source_total_frames/trim_start/trim_stop so
-    the .pt still says which part of the original video it came from.
-    """
-    import torch  # local: keeps this module importable without torch for --help
-
-    panels = [v.numpy() for v in features.values()]
-    stacked = np.concatenate(panels, axis=1)          # (T, sum(n_cols))
-    empty = np.isnan(stacked).all(axis=1)
-    total = len(empty)
-
-    valid_idx = np.flatnonzero(~empty)
-    if valid_idx.size == 0:
-        raise ValueError(f"{take_id}: no frame has a skeleton at all -- nothing to train on.")
-
-    start, stop = int(valid_idx[0]), int(valid_idx[-1]) + 1
-    kept = stop - start
-    if start == 0 and stop == total:
-        logger.info("  No empty edges to trim (%s frames).", total)
-    else:
-        fps = metadata["fps"]
-        logger.warning(
-            "  Trimmed empty edges: %s -> %s frames (dropped %s leading = %.1fs, "
-            "%s trailing = %.1fs).", total, kept, start, start / fps,
-            total - stop, (total - stop) / fps)
-
-    interior_empty = int(np.count_nonzero(empty[start:stop]))
-    if interior_empty:
-        logger.warning("  %s interior frame(s) still have no skeleton -- left as NaN on "
-                       "purpose, see trim_empty_edges.", interior_empty)
-
-    valid_fraction = (kept - interior_empty) / kept
-    if valid_fraction < min_valid_fraction:
-        raise ValueError(
-            f"{take_id}: only {valid_fraction:.1%} of the trimmed span has a skeleton "
-            f"(below --min-valid-fraction={min_valid_fraction:.0%}). Refusing to build it; "
-            "re-check the tracking (review_tracks.py / --target-tracks) for this take.")
-
-    if start != 0 or stop != total:
-        features = {key: tensor[start:stop] for key, tensor in features.items()}
-        # Every label tensor is per-frame on dim 0 (task_id, *_vector, progress,
-        # mistake, step_*), so one slice keeps them aligned with the features.
-        # Asserted rather than assumed -- a future non-per-frame label would
-        # otherwise be silently corrupted here.
-        for key, tensor in label_tensors.items():
-            assert tensor.shape[0] == total, (
-                f"{take_id}: label {key!r} has {tensor.shape[0]} rows, expected {total} -- "
-                "trim_empty_edges assumes every label tensor is per-frame.")
-        label_tensors = {key: tensor[start:stop] for key, tensor in label_tensors.items()}
-
-    metadata["source_total_frames"] = total
-    metadata["trim_start"] = start
-    metadata["trim_stop"] = stop
-    metadata["total_frames"] = kept
-    metadata["interior_empty_frames"] = interior_empty
-    return metadata, features, label_tensors
 
 
 def plot_feature_label_overview(take_id, metadata, features, label_tensors):
@@ -214,6 +131,13 @@ def parse_args():
                              "fraction of its frames has a skeleton (e.g. 0.8). Default 0 = "
                              "build everything and just report. Use it to fail loudly on "
                              "takes whose tracking needs fixing.")
+    parser.add_argument("--no-fill-nan", dest="fill_nan", action="store_false",
+                        help="Leave the NaNs that survive trimming (interior gaps, short "
+                             "runs, degenerate columns) in the saved features. Off by "
+                             "default because a single NaN makes that column's dataset-wide "
+                             "mean/std NaN, which normalization then spreads over every "
+                             "frame of every take -- see fill_nan_last_known.")
+    parser.set_defaults(fill_nan=True)
     parser.add_argument("--no-plots", action="store_true",
                         help="Skip the per-take plots (they dominate the runtime).")
     return parser.parse_args()
@@ -236,7 +160,7 @@ def main():
     logger.info("Writing .pt -> %s", out_pt_dir)
 
     built = failed = 0
-    trimmed_frames = 0
+    trimmed_frames = filled_frames = 0
     for npz_file in npz_files:
         logger.info("Processing %s", npz_file.name)
         try:
@@ -253,10 +177,18 @@ def main():
             # annotations up against the video timeline) and BEFORE the plots, so
             # what gets plotted is what gets saved.
             if args.trim_empty:
-                metadata, features, label_tensors = trim_empty_edges(
+                metadata, features, label_tensors = cleanup.trim_empty_edges(
                     take_id, metadata, features, label_tensors, logger,
                     min_valid_fraction=args.min_valid_fraction)
                 trimmed_frames += metadata["source_total_frames"] - metadata["total_frames"]
+
+            # AFTER the trim (so the long empty edges are gone rather than held
+            # for minutes) and still BEFORE the plots, so the overview shows the
+            # filled values that actually get saved.
+            if args.fill_nan:
+                metadata, features = cleanup.fill_nan_last_known(
+                    take_id, metadata, features, logger)
+                filled_frames += metadata["nan_filled_frames"]
 
             if save_plots or SHOW_PLOTS:
                 plot_label_debug(take_id, debug_frames, logger, show=SHOW_PLOTS, save=save_plots,
@@ -282,6 +214,9 @@ def main():
     logger.info("Built %s take(s), %s failed -> %s", built, failed, out_pt_dir)
     if args.trim_empty:
         logger.info("Trimmed %s empty edge frame(s) across all takes.", trimmed_frames)
+    if args.fill_nan:
+        logger.info("Filled NaNs on %s frame(s) across all takes with the last known value.",
+                    filled_frames)
 
 
 if __name__ == "__main__":
