@@ -1,13 +1,21 @@
 """Claude L1 LSTM: prepare, train and evaluate the 15 participant-held-out folds.
 
 Run from the repository root: python -B -m model_lstm.LSTM_loso_tune
+Direct execution and IDE debugging are also supported.
 Edit the paths in __main__; importing this module never starts training.
 """
+
 
 from datetime import datetime
 import gc
 import json
 from pathlib import Path
+import sys
+
+# Direct file execution puts model_lstm/, rather than the repository, on sys.path.
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 import numpy as np
 import torch
