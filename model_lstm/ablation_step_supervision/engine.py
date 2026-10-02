@@ -19,7 +19,7 @@ def class_scores(cm):
     return precision, recall, f1, support
 
 
-def run_epoch(model, loader, device, optimizer=None, collect=False):
+def run_epoch(model, loader, device, optimizer=None, collect=False, gradient_clip=None):
     training = optimizer is not None
     model.train(training)
     names = ("step", "progress", "mistake", "background")
@@ -42,7 +42,9 @@ def run_epoch(model, loader, device, optimizer=None, collect=False):
                 raise FloatingPointError("Non-finite ablation loss")
             if training:
                 loss.backward()
-                optimizer.step()  # Original Adam setup: no scheduler or gradient clipping.
+                if gradient_clip is not None:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clip, error_if_nonfinite=True)
+                optimizer.step()
             batch = len(x)
             windows += batch
             step_count += batch_steps

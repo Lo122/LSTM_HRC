@@ -1,6 +1,6 @@
-"""LOSO for the frozen exp_2026-09-24_17-02-55 reference configuration.
+"""LOSO optimization ablation: initial mirror backbone/loss with L1 optimizer settings.
 
-python -B -m model_lstm.loso_initial_mirror.run_loso
+python -B -m model_lstm.ablation_mirror_optimization.run_loso
 Use --output-dir to resume, --folds to select participants.
 """
 import argparse
@@ -21,12 +21,16 @@ import torch
 from torch.utils.data import DataLoader
 from model_lstm.loso_initial_mirror.data import SETTINGS, load_fold, training_weights, source_identity
 from model_lstm.loso_initial_mirror.model import MirrorLSTM
-from model_lstm.ablation_step_supervision.engine import fit, run_epoch
+from model_lstm.ablation_mirror_optimization.engine import OPTIMIZATION, fit, run_epoch
+from model_lstm.ablation_mirror_optimization.report import validate_baseline, compare_baseline
 from model_lstm.ablation_step_supervision.report import save_confusion, summarize
 from data_proc_2d.app.build_norm_dataset_tune import l1_file_splits
 
 DEFAULT_DATA = Path('G:/.shortcut-targets-by-id/1nZZWQUKOdxeC-oo-NKucbuUj38ir4mZC/'
                     'ITECH_Thesis/Videos/dataset/skeleton_3d/ceiling_panel_installation_04')
+
+
+DEFAULT_BASELINE = ROOT / 'model_lstm/loso_initial_mirror/runs/MIRROR_LOSO_2026-10-01_15-38-16_506620'
 
 
 def write_json(path, value):
@@ -36,7 +40,7 @@ def write_json(path, value):
 
 
 def run_loso(data_root, run_root, folds=tuple(range(1, 16)), epochs=12, seed=42,
-             selection='macro_f1', device=None, cache_dir=None):
+             selection='macro_f1', device=None, cache_dir=None, baseline_run=DEFAULT_BASELINE):
     if (not folds or len(set(folds)) != len(folds) or set(folds) - set(range(1, 16))
             or epochs < 1 or selection not in ('macro_f1', 'val_loss')):
         raise ValueError('Invalid folds, epochs or selection')
@@ -53,6 +57,10 @@ def run_loso(data_root, run_root, folds=tuple(range(1, 16)), epochs=12, seed=42,
                     scheduler=None, gradient_clip=None, normalization='raw float32 all-frame mean/std + 1e-6',
                     feature_transform='none; no ratio clipping, no azimuth sin/cos',
                     progress_scaling='raw task_progress / 100 exactly once')
+    baseline_run = Path(baseline_run).resolve()
+    validate_baseline(baseline_run, protocol, folds)
+    protocol.update(OPTIMIZATION, experiment='mirror_l1_optimization_v1',
+                    scheduler_t_max=epochs, scheduler_eta_min=0., baseline_run=str(baseline_run))
     resuming = run_root.exists()
     if resuming:
         previous = json.loads((run_root / 'protocol.json').read_text())
@@ -74,9 +82,12 @@ def run_loso(data_root, run_root, folds=tuple(range(1, 16)), epochs=12, seed=42,
         run_root.mkdir(parents=True)
         source = run_root / 'source'
         source.mkdir()
-        for name in ('run_loso.py', 'data.py', 'model.py', 'reference_config.json', 'README.md'):
+        for name in ('run_loso.py', 'engine.py', 'report.py', 'README.md'):
             shutil.copy2(Path(__file__).with_name(name), source / name)
-        for relative in ('model_lstm/LSTM_model_train.py',
+        for relative in ('model_lstm/loso_initial_mirror/data.py',
+                         'model_lstm/loso_initial_mirror/model.py',
+                         'model_lstm/loso_initial_mirror/reference_config.json',
+                         'model_lstm/LSTM_model_train.py',
                          'model_lstm/ablation_step_supervision/engine.py',
                          'model_lstm/ablation_step_supervision/report.py',
                          'model_lstm/ablation_step_supervision/data.py',
@@ -87,12 +98,22 @@ def run_loso(data_root, run_root, folds=tuple(range(1, 16)), epochs=12, seed=42,
             shutil.copy2(ROOT / relative, destination)
     write_json(run_root / 'protocol.json', protocol)
     summarize(run_root, ['mirror'])
+    compare_baseline(run_root, baseline_run)
     for uid in folds:
         directory = run_root / 'mirror' / f'fold_{uid:02d}'
         if (directory / 'test_results.json').exists():
             print(f'Skipping completed UID {uid:02d}', flush=True)
             continue
-        print(f'\nInitial mirror LOSO UID {uid:02d}: {epochs} epochs, {device}', flush=True)
+        print(f'\nMirror L1-optimization LOSO UID {uid:02d}: {epochs} epochs, {device}', flush=True)
+        directory.mkdir(parents=True, exist_ok=True)
+        for name in ('norm_stats.npz', 'dataset_manifest.json'):
+            source = baseline_run / 'mirror' / f'fold_{uid:02d}' / name
+            destination = directory / name
+            if destination.exists():
+                if destination.read_bytes() != source.read_bytes():
+                    raise ValueError(f'Fold metadata differs from baseline: {destination}')
+            else:
+                shutil.copy2(source, destination)
         datasets, manifest = load_fold(data_root, directory, uid, cache_dir)
         fold_seed = seed + uid - 1
         sampler, counts, weights = training_weights(datasets['train'], fold_seed)
@@ -112,8 +133,7 @@ def run_loso(data_root, run_root, folds=tuple(range(1, 16)), epochs=12, seed=42,
                    for split, dataset in datasets.items()}
         torch.manual_seed(fold_seed)
         model = MirrorLSTM(manifest['input_dim'], weights).to(device)
-        fit(model, loaders['train'], loaders['val'], device, directory, epochs,
-            learning_rate=SETTINGS['lr'], weight_decay=SETTINGS['weight_decay'])
+        fit(model, loaders['train'], loaders['val'], device, directory, epochs)
         model.load_state_dict(torch.load(directory / checkpoint, map_location=device, weights_only=True))
         # Fixed checkpoint: no weighted sampler in train/val/test evaluation.
         train_eval = DataLoader(datasets['train'], batch_size=SETTINGS['batch_size'], shuffle=False, num_workers=0)
@@ -139,6 +159,7 @@ def run_loso(data_root, run_root, folds=tuple(range(1, 16)), epochs=12, seed=42,
         if device.type == 'cuda':
             torch.cuda.empty_cache()
         summarize(run_root, ['mirror'])
+        compare_baseline(run_root, baseline_run)
     print(f'Results saved: {run_root}', flush=True)
     return run_root
 
@@ -147,6 +168,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--data-root', type=Path, default=DEFAULT_DATA)
     parser.add_argument('--output-dir', type=Path)
+    parser.add_argument('--baseline-run', type=Path, default=DEFAULT_BASELINE)
     parser.add_argument('--folds', nargs='+', type=int, choices=range(1, 16), default=list(range(1, 16)))
     parser.add_argument('--epochs', type=int, default=SETTINGS['epochs'])
     parser.add_argument('--seed', type=int, default=SETTINGS['sampler_seed'])
@@ -154,8 +176,8 @@ def main():
     parser.add_argument('--device', choices=['cpu', 'cuda'])
     parser.add_argument('--cache-dir', type=Path)
     args = parser.parse_args()
-    output = args.output_dir or Path(__file__).parent / 'runs' / datetime.now().strftime('MIRROR_LOSO_%Y-%m-%d_%H-%M-%S_%f')
-    run_loso(args.data_root, output, args.folds, args.epochs, args.seed, args.selection, args.device, args.cache_dir)
+    output = args.output_dir or Path(__file__).parent / 'runs' / datetime.now().strftime('MIRROR_L1OPT_%Y-%m-%d_%H-%M-%S_%f')
+    run_loso(args.data_root, output, args.folds, args.epochs, args.seed, args.selection, args.device, args.cache_dir, args.baseline_run)
 
 
 if __name__ == '__main__':
